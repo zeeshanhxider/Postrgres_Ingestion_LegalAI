@@ -91,15 +91,19 @@ class BriefIngestor:
             chunk_ids = self._insert_chunks(brief_id, case_id, chunks)
             logger.info(f"✅ Inserted {len(chunk_ids)} chunks")
             
-            # Step 7: Process sentences (TEMPORARILY DISABLED - too slow with Ollama)
+            # Step 7: Process sentences
+            # TEMPORARILY DISABLED - too slow with Ollama (generates embeddings per sentence)
             # logger.info("✂️ Processing sentences...")
             # sentence_stats = self._process_sentences(brief_id, chunks, chunk_ids)
             # logger.info(f"✅ Processed {sentence_stats['total_sentences']} sentences")
+            sentence_stats = {'total_sentences': 0}
             
-            # Step 8: Process words for precise search (TEMPORARILY DISABLED)
+            # Step 8: Process words for precise search
+            # TEMPORARILY DISABLED - performance optimization
             # logger.info("📝 Processing words...")
             # word_stats = self._process_words(brief_id, chunks, chunk_ids)
             # logger.info(f"✅ Processed {word_stats['total_words']} words")
+            word_stats = {'total_words': 0}
             
             # Step 9: Extract phrases
             logger.info("🔤 Extracting legal phrases...")
@@ -126,8 +130,8 @@ class BriefIngestor:
                 'case_id': case_id,
                 'case_linked': case_id is not None,
                 'chunks_created': len(chunk_ids),
-                'sentences_processed': 0,  # sentence_stats['total_sentences'],
-                'words_indexed': 0,  # word_stats['total_words'],
+                'sentences_processed': sentence_stats['total_sentences'],
+                'words_indexed': word_stats['total_words'],
                 'phrases_extracted': phrase_stats['phrases_inserted'],
                 'toa_citations': toa_stats['citations_found'],
                 'embedding_dimension': len(brief_embedding) if brief_embedding else 0,
@@ -176,23 +180,47 @@ class BriefIngestor:
         # Parse filename for brief type and party
         filename_lower = filename.lower()
         
-        # Determine brief type
-        if 'reply' in filename_lower:
-            brief_type = 'Reply'
-        elif 'response' in filename_lower or 'answer' in filename_lower:
-            brief_type = 'Response'
-        elif 'opening' in filename_lower or 'initial' in filename_lower:
-            brief_type = 'Opening'
-        else:
-            brief_type = 'Unknown'
-        
-        # Determine filing party
+        # Determine filing party first (needed for default brief type)
         if 'appellant' in filename_lower or 'petitioner' in filename_lower:
             filing_party = 'Appellant'
         elif 'respondent' in filename_lower:
             filing_party = 'Respondent'
         else:
             filing_party = 'Unknown'
+        
+        # Determine brief type with improved detection
+        if 'reply' in filename_lower:
+            # Check for supplemental or amended
+            if 'supplemental' in filename_lower:
+                brief_type = 'Supplemental Reply'
+            elif 'amended' in filename_lower:
+                brief_type = 'Amended Reply'
+            else:
+                brief_type = 'Reply'
+        elif 'response' in filename_lower or 'answer' in filename_lower:
+            if 'supplemental' in filename_lower:
+                brief_type = 'Supplemental Response'
+            elif 'amended' in filename_lower:
+                brief_type = 'Amended Response'
+            else:
+                brief_type = 'Response'
+        elif 'opening' in filename_lower or 'initial' in filename_lower:
+            brief_type = 'Opening'
+        elif 'statement_of_additional_grounds' in filename_lower or 'additional_grounds' in filename_lower:
+            brief_type = 'Statement of Additional Grounds'
+        elif 'supplemental' in filename_lower:
+            brief_type = 'Supplemental Brief'
+        elif 'amended' in filename_lower:
+            brief_type = 'Amended Brief'
+        else:
+            # Default based on party if no type keyword found
+            # Appellant's first brief is typically "Opening", Respondent's is "Response"
+            if filing_party == 'Appellant':
+                brief_type = 'Opening'
+            elif filing_party == 'Respondent':
+                brief_type = 'Response'
+            else:
+                brief_type = 'Unknown'
         
         return {
             'case_file_id': case_file_id,
