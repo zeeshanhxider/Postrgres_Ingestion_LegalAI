@@ -13,6 +13,8 @@ from typing import List, Dict
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 # Load environment variables from .env file
 load_dotenv()
@@ -47,16 +49,21 @@ class BriefBatchProcessor:
             ...
     """
     
-    def __init__(self, db_connection_string: str):
+    def __init__(self, db_connection_string: str, max_workers: int = 3):
         """Initialize batch processor with database connection"""
-        self.engine = create_engine(db_connection_string, echo=False)
+        # Increase pool size to handle more concurrent connections
+        pool_size = max(max_workers + 2, 10)
+        max_overflow = max(max_workers, 10)
+        self.engine = create_engine(db_connection_string, echo=False, pool_size=pool_size, max_overflow=max_overflow)
         self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
-        self.brief_ingestor = BriefIngestor(self.engine)
+        self.db_connection_string = db_connection_string
+        self.max_workers = max_workers
         
         self.processed_count = 0
         self.failed_count = 0
         self.skipped_count = 0
         self.failed_files = []
+        self.lock = threading.Lock()
     
     def process_briefs_directory(self, briefs_dir: str, year_filter: int = None):
         """
@@ -137,34 +144,54 @@ class BriefBatchProcessor:
             self._process_case_folder(case_folder, year)
     
     def _process_case_folder(self, case_folder: Path, year: int):
-        """Process all PDF files in a case folder"""
+        """Process all PDF files in a case folder with parallel processing"""
         pdf_files = list(case_folder.glob("*.pdf"))
         
         if not pdf_files:
             logger.info(f"⚠️ No PDF files found in {case_folder.name}")
-            self.skipped_count += 1
+            with self.lock:
+                self.skipped_count += 1
             return
         
         logger.info(f"📄 Found {len(pdf_files)} PDF files")
         
-        for pdf_file in pdf_files:
-            self._process_brief_file(pdf_file, year)
+        # Process PDFs in parallel
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {
+                executor.submit(self._process_brief_file, pdf_file, year): pdf_file 
+                for pdf_file in pdf_files
+            }
+            
+            for future in as_completed(futures):
+                pdf_file = futures[future]
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.error(f"❌ Unexpected error processing {pdf_file.name}: {str(e)}")
+                    with self.lock:
+                        self.failed_count += 1
+                        self.failed_files.append(str(pdf_file))
     
     def _process_brief_file(self, pdf_file: Path, year: int):
-        """Process a single brief PDF file"""
+        """Process a single brief PDF file (thread-safe)"""
         try:
             # Check if already processed
             if self._is_already_processed(pdf_file):
                 logger.info(f"⏭️ Skipping already processed: {pdf_file.name}")
-                self.skipped_count += 1
+                with self.lock:
+                    self.skipped_count += 1
                 return
             
             logger.info(f"\n{'─'*60}")
             logger.info(f"📝 Processing: {pdf_file.name}")
             logger.info(f"{'─'*60}")
             
+            # Create thread-local engine and ingestor
+            thread_engine = create_engine(self.db_connection_string, echo=False)
+            brief_ingestor = BriefIngestor(thread_engine)
+            
             # Ingest brief
-            result = self.brief_ingestor.ingest_pdf_brief(str(pdf_file), year=year)
+            result = brief_ingestor.ingest_pdf_brief(str(pdf_file), year=year)
             
             # Log results
             logger.info(f"\n✅ Brief processed successfully!")
@@ -176,12 +203,14 @@ class BriefBatchProcessor:
             logger.info(f"   Phrases: {result['phrases_extracted']}")
             logger.info(f"   TOA citations: {result['toa_citations']}")
             
-            self.processed_count += 1
+            with self.lock:
+                self.processed_count += 1
             
         except Exception as e:
             logger.error(f"❌ Failed to process {pdf_file.name}: {str(e)}")
-            self.failed_count += 1
-            self.failed_files.append((str(pdf_file), str(e)))
+            with self.lock:
+                self.failed_count += 1
+                self.failed_files.append((str(pdf_file), str(e)))
     
     def _is_already_processed(self, pdf_file: Path) -> bool:
         """Check if brief was already processed"""
@@ -212,11 +241,16 @@ def main():
                       help='Database connection URL')
     parser.add_argument('--case-folder', type=str, default=None,
                       help='Process only specific case folder (e.g., 83895-4)')
+    parser.add_argument('--workers', type=int, default=3,
+                      help='Number of parallel workers (default: 3, recommended: 5-10)')
     
     args = parser.parse_args()
     
-    # Initialize processor
-    processor = BriefBatchProcessor(args.db_url)
+    # Initialize processor with parallel workers
+    processor = BriefBatchProcessor(args.db_url, max_workers=args.workers)
+    
+    logger.info(f"⚡ Using {args.workers} parallel workers")
+    logger.info("")
     
     # Process specific case folder or entire directory
     if args.case_folder:
