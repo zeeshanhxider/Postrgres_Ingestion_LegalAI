@@ -29,6 +29,30 @@ def local_ollama_embed(text: str, model: str = None) -> List[float]:
     embeddings = OllamaEmbeddings(model=ollama_model, base_url=ollama_base_url)
     return embeddings.embed_query(text)
 
+def local_ollama_embed_batch(texts: List[str], model: str = None) -> List[List[float]]:
+    """
+    Create embeddings for multiple texts in a single batch call.
+    Much faster than calling local_ollama_embed multiple times.
+    
+    Args:
+        texts: List of texts to embed
+        model: Ollama model name (default: mxbai-embed-large)
+        
+    Returns:
+        List of embedding vectors
+    """
+    try:
+        # Try the new langchain-ollama package first
+        from langchain_ollama import OllamaEmbeddings
+    except ImportError:
+        # Fallback to the deprecated version
+        from langchain_community.embeddings import OllamaEmbeddings
+    
+    ollama_model = model or os.getenv("OLLAMA_EMBED_MODEL", "mxbai-embed-large")
+    ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    embeddings = OllamaEmbeddings(model=ollama_model, base_url=ollama_base_url)
+    return embeddings.embed_documents(texts)
+
 def openai_embed(text: str, dimensions: int = 1024) -> List[float]:
     """
     Create an embedding using OpenAI as fallback.
@@ -94,6 +118,59 @@ def generate_embedding(text: str, prefer_ollama: bool = True, ollama_only: bool 
     
     logger.error("Embedding generation failed (Ollama-only mode)")
     return None
+
+def generate_embeddings_batch(texts: List[str], prefer_ollama: bool = True, ollama_only: bool = False) -> List[Optional[List[float]]]:
+    """
+    Generate embeddings for multiple texts in batch (much faster than individual calls).
+    
+    Args:
+        texts: List of texts to embed
+        prefer_ollama: Whether to try Ollama first (default True)
+        ollama_only: If True, only use Ollama (no OpenAI fallback)
+        
+    Returns:
+        List of embedding vectors (None for failed embeddings)
+    """
+    if not texts:
+        return []
+    
+    # Filter out empty texts
+    filtered_texts = [(i, text) for i, text in enumerate(texts) if text and text.strip()]
+    if not filtered_texts:
+        logger.warning("All texts are empty")
+        return [None] * len(texts)
+    
+    indices, valid_texts = zip(*filtered_texts) if filtered_texts else ([], [])
+    
+    # Check if Ollama-only mode is enabled via environment
+    if os.getenv('USE_OLLAMA', 'false').lower() == 'true':
+        ollama_only = True
+    
+    embeddings_result = [None] * len(texts)
+    
+    # Try Ollama batch embedding
+    if prefer_ollama or ollama_only:
+        try:
+            logger.debug(f"Attempting Ollama batch embedding for {len(valid_texts)} texts...")
+            batch_embeddings = local_ollama_embed_batch(list(valid_texts))
+            logger.debug(f"Ollama batch embedding successful, {len(batch_embeddings)} embeddings generated")
+            
+            # Map back to original indices
+            for idx, embedding in zip(indices, batch_embeddings):
+                embeddings_result[idx] = embedding
+            
+            return embeddings_result
+        except Exception as e:
+            if ollama_only:
+                logger.error(f"Ollama-only mode: batch embedding failed: {e}")
+                return embeddings_result
+            logger.warning(f"Ollama batch embedding failed: {e}, falling back to individual calls...")
+    
+    # Fallback: try individual embeddings (slower but more reliable)
+    for idx, text in zip(indices, valid_texts):
+        embeddings_result[idx] = generate_embedding(text, prefer_ollama=prefer_ollama, ollama_only=ollama_only)
+    
+    return embeddings_result
 
 def generate_case_level_embedding(title: str, summary: str = "") -> Optional[List[float]]:
     """

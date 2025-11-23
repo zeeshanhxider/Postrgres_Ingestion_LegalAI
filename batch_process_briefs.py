@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(__file__))))
 from app.database import engine, SessionLocal
 from app.services.brief_ingestor import BriefIngestor
 from app.core.config import Settings
+from sqlalchemy import text
 
 # Configure logging
 logging.basicConfig(
@@ -64,6 +65,119 @@ class BriefBatchProcessor:
         self.skipped_count = 0
         self.failed_files = []
         self.lock = threading.Lock()
+    
+    def run_post_processing(self):
+        """
+        Run post-processing to fix brief chaining after batch ingestion.
+        
+        This is needed because parallel processing can cause race conditions where
+        Response/Reply briefs are processed before Opening briefs exist in the database.
+        This method backfills the responds_to_brief_id field by linking:
+        - Response briefs → Opening briefs
+        - Reply briefs → Response briefs
+        - Supplemental Response → Opening briefs
+        - Supplemental Reply → Response briefs
+        """
+        logger.info(f"\n{'='*80}")
+        logger.info("🔗 Running post-processing: Backfilling brief chaining...")
+        logger.info(f"{'='*80}\n")
+        
+        try:
+            with self.engine.connect() as conn:
+                # Update Response briefs to link to Opening briefs
+                logger.info("🔄 Linking Response briefs to Opening briefs...")
+                result1 = conn.execute(text("""
+                    UPDATE briefs
+                    SET responds_to_brief_id = matches.opening_id
+                    FROM (
+                        SELECT DISTINCT ON (r.brief_id)
+                            r.brief_id,
+                            o.brief_id as opening_id
+                        FROM briefs r
+                        JOIN briefs o ON 
+                            r.case_id = o.case_id
+                            AND o.brief_type = 'Opening'
+                            AND r.brief_type = 'Response'
+                        WHERE r.responds_to_brief_id IS NULL
+                        ORDER BY r.brief_id, o.created_at DESC
+                    ) matches
+                    WHERE briefs.brief_id = matches.brief_id
+                """))
+                conn.commit()
+                logger.info(f"✅ Updated {result1.rowcount} Response briefs")
+                
+                # Update Reply briefs to link to Response briefs
+                logger.info("🔄 Linking Reply briefs to Response briefs...")
+                result2 = conn.execute(text("""
+                    UPDATE briefs
+                    SET responds_to_brief_id = matches.opening_id
+                    FROM (
+                        SELECT DISTINCT ON (r.brief_id)
+                            r.brief_id,
+                            o.brief_id as opening_id
+                        FROM briefs r
+                        JOIN briefs o ON 
+                            r.case_id = o.case_id
+                            AND o.brief_type = 'Response'
+                            AND r.brief_type = 'Reply'
+                        WHERE r.responds_to_brief_id IS NULL
+                        ORDER BY r.brief_id, o.created_at DESC
+                    ) matches
+                    WHERE briefs.brief_id = matches.brief_id
+                """))
+                conn.commit()
+                logger.info(f"✅ Updated {result2.rowcount} Reply briefs")
+                
+                # Update Supplemental Response briefs
+                logger.info("🔄 Linking Supplemental Response briefs to Opening briefs...")
+                result3 = conn.execute(text("""
+                    UPDATE briefs
+                    SET responds_to_brief_id = matches.opening_id
+                    FROM (
+                        SELECT DISTINCT ON (r.brief_id)
+                            r.brief_id,
+                            o.brief_id as opening_id
+                        FROM briefs r
+                        JOIN briefs o ON 
+                            r.case_id = o.case_id
+                            AND o.brief_type = 'Opening'
+                            AND r.brief_type = 'Supplemental Response'
+                        WHERE r.responds_to_brief_id IS NULL
+                        ORDER BY r.brief_id, o.created_at DESC
+                    ) matches
+                    WHERE briefs.brief_id = matches.brief_id
+                """))
+                conn.commit()
+                logger.info(f"✅ Updated {result3.rowcount} Supplemental Response briefs")
+                
+                # Update Supplemental Reply briefs
+                logger.info("🔄 Linking Supplemental Reply briefs to Response briefs...")
+                result4 = conn.execute(text("""
+                    UPDATE briefs
+                    SET responds_to_brief_id = matches.opening_id
+                    FROM (
+                        SELECT DISTINCT ON (r.brief_id)
+                            r.brief_id,
+                            o.brief_id as opening_id
+                        FROM briefs r
+                        JOIN briefs o ON 
+                            r.case_id = o.case_id
+                            AND o.brief_type = 'Response'
+                            AND r.brief_type = 'Supplemental Reply'
+                        WHERE r.responds_to_brief_id IS NULL
+                        ORDER BY r.brief_id, o.created_at DESC
+                    ) matches
+                    WHERE briefs.brief_id = matches.brief_id
+                """))
+                conn.commit()
+                logger.info(f"✅ Updated {result4.rowcount} Supplemental Reply briefs")
+                
+                total_updated = result1.rowcount + result2.rowcount + result3.rowcount + result4.rowcount
+                logger.info(f"\n✅ Post-processing complete: {total_updated} total briefs chained")
+                
+        except Exception as e:
+            logger.error(f"❌ Post-processing failed: {str(e)}")
+            raise
     
     def process_briefs_directory(self, briefs_dir: str, year_filter: int = None):
         """
@@ -109,6 +223,10 @@ class BriefBatchProcessor:
             logger.info(f"{'='*80}\n")
             
             self._process_year_folder(year_folder, year)
+        
+        # Run post-processing to fix brief chaining
+        if self.processed_count > 0:
+            self.run_post_processing()
         
         # Summary statistics
         end_time = datetime.now()
@@ -269,6 +387,10 @@ def main():
         if case_path:
             logger.info(f"🎯 Processing single case folder: {args.case_folder}")
             processor._process_case_folder(case_path, year)
+            
+            # Run post-processing to fix brief chaining
+            if processor.processed_count > 0:
+                processor.run_post_processing()
             
             # Print summary
             logger.info(f"\n{'='*80}")

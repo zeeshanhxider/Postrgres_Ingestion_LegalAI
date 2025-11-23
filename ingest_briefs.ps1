@@ -48,8 +48,27 @@ Write-Host ""
 # Show configuration
 Write-Host "Configuration:" -ForegroundColor Cyan
 Write-Host "  Database: localhost:5433/cases_llama3_3"
-Write-Host "  Embeddings: Ollama (https://ollama.legaldb.ai)"
-Write-Host "  Model: mxbai-embed-large (1024 dims)"
+
+# Read USE_OLLAMA from .env file
+$UseOllama = "true"
+if (Test-Path ".env") {
+    $EnvContent = Get-Content ".env"
+    foreach ($Line in $EnvContent) {
+        if ($Line -match "^\s*USE_OLLAMA\s*=\s*(.+)") {
+            $UseOllama = $Matches[1].Trim()
+            break
+        }
+    }
+}
+
+if ($UseOllama -eq "false") {
+    Write-Host "  Embeddings: OpenAI (text-embedding-3-large)" -ForegroundColor Green
+    Write-Host "  Model: text-embedding-3-large (1024 dims)"
+} else {
+    Write-Host "  Embeddings: Ollama (https://ollama.legaldb.ai)"
+    Write-Host "  Model: mxbai-embed-large (1024 dims)"
+}
+
 Write-Host "  Parallel Workers: $Workers" -ForegroundColor Green
 
 if ($CaseFolder) {

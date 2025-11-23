@@ -18,7 +18,7 @@ from ..chunker import LegalTextChunker
 from .word_processor import WordProcessor
 from .phrase_extractor import PhraseExtractor
 from .sentence_processor import SentenceProcessor
-from .embedding_service import generate_embedding
+from .embedding_service import generate_embedding, generate_embeddings_batch
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +150,7 @@ class BriefIngestor:
         Parse brief filename to extract metadata
         
         Returns metadata dict with:
-        - case_file_id: From folder name (e.g., "83895-4")
+        - case_file_id: From filename prefix (e.g., "860861_Appellants_8505" → "86086-1")
         - brief_type: Opening/Response/Reply
         - filing_party: Appellant/Respondent
         - source_file: Filename only
@@ -160,22 +160,29 @@ class BriefIngestor:
         path = Path(file_path)
         filename = path.stem  # Without extension
         
-        # Extract folder case_file_id (e.g., "83895-4" from "downloaded-briefs/2024-briefs/83895-4/")
+        # Extract year from path
         parts = path.parts
-        case_file_id = None
         year = None
         
-        for i, part in enumerate(parts):
+        for part in parts:
             # Look for year pattern: "2024-briefs"
             if re.match(r'\d{4}-briefs', part):
                 year = int(part.split('-')[0])
-                # Next part should be case number
-                if i + 1 < len(parts):
-                    case_file_id = parts[i + 1]
                 break
         
+        # Extract case_file_id from filename prefix
+        # Format: "860861_Appellants_8505.pdf" → "86086-1"
+        # Take first 6 digits, format as XXXXX-X
+        case_file_id = None
+        filename_digits = re.match(r'^(\d+)', filename)
+        if filename_digits:
+            digits = filename_digits.group(1)
+            if len(digits) >= 5:
+                # Format as XXXXX-X (5 digits, hyphen, 1 digit)
+                case_file_id = f"{digits[:5]}-{digits[5]}" if len(digits) >= 6 else f"{digits[:5]}-0"
+        
         if not case_file_id:
-            raise ValueError(f"Could not extract case_file_id from path: {file_path}")
+            raise ValueError(f"Could not extract case_file_id from filename: {filename}")
         
         # Parse filename for brief type and party
         filename_lower = filename.lower()
@@ -244,8 +251,8 @@ class BriefIngestor:
             try:
                 folder_case_id = metadata['case_file_id']
                 
-                # Link to case via folder case_file_id and get outcome data
-                case_id, outcome_data = self._link_to_case(conn, folder_case_id)
+                # Link to case via folder case_file_id
+                case_id = self._link_to_case(conn, folder_case_id)
                 
                 # Extract summary (first 500 chars)
                 summary = full_text[:500] if full_text else None
@@ -254,15 +261,13 @@ class BriefIngestor:
                 insert_query = text("""
                     INSERT INTO briefs (
                         case_id, case_file_id,
-                        brief_type, filing_party, 
-                        winner_legal_role, winner_personal_role, appeal_outcome,
+                        brief_type, filing_party,
                         page_count, word_count,
                         summary, full_text, source_file, source_file_path, year,
                         processing_status, extraction_timestamp
                     ) VALUES (
                         :case_id, :case_file_id,
                         :brief_type, :filing_party,
-                        :winner_legal_role, :winner_personal_role, :appeal_outcome,
                         :page_count, :word_count,
                         :summary, :full_text, :source_file, :source_file_path, :year,
                         'processing', NOW()
@@ -275,9 +280,6 @@ class BriefIngestor:
                     'case_file_id': folder_case_id,
                     'brief_type': metadata['brief_type'],
                     'filing_party': metadata['filing_party'],
-                    'winner_legal_role': outcome_data.get('winner_legal_role'),
-                    'winner_personal_role': outcome_data.get('winner_personal_role'),
-                    'appeal_outcome': outcome_data.get('appeal_outcome'),
                     'page_count': page_count,
                     'word_count': len(full_text.split()) if full_text else 0,
                     'summary': summary,
@@ -297,16 +299,15 @@ class BriefIngestor:
                 logger.error(f"Failed to insert brief: {str(e)}")
                 raise
     
-    def _link_to_case(self, conn, folder_case_id: str) -> Tuple[Optional[int], Dict[str, Optional[str]]]:
+    def _link_to_case(self, conn, folder_case_id: str) -> Optional[int]:
         """
-        Link brief to case via folder case_file_id (exact match) and fetch outcome data
+        Link brief to case via folder case_file_id (exact match)
         
         Returns:
-            (case_id, outcome_data) - case_id is None if no match
-            outcome_data dict contains: winner_legal_role, winner_personal_role, appeal_outcome
+            case_id - None if no match found
         """
         query = text("""
-            SELECT case_id, winner_legal_role, winner_personal_role, appeal_outcome
+            SELECT case_id
             FROM cases
             WHERE case_file_id = :folder_case_id
             LIMIT 1
@@ -317,15 +318,10 @@ class BriefIngestor:
         
         if row:
             logger.info(f"✅ Linked via folder case_file_id: {folder_case_id}")
-            outcome_data = {
-                'winner_legal_role': row[1],
-                'winner_personal_role': row[2],
-                'appeal_outcome': row[3]
-            }
-            return row[0], outcome_data
+            return row[0]
         
         logger.warning(f"⚠️ No case match for folder '{folder_case_id}'")
-        return None, {}
+        return None
     
     def _detect_brief_chaining(self, brief_id: int, case_file_id: str, brief_type: str):
         """
@@ -395,19 +391,21 @@ class BriefIngestor:
                 logger.error(f"Failed to detect brief chaining: {str(e)}")
     
     def _insert_chunks(self, brief_id: int, case_id: Optional[int], chunks: List) -> List[str]:
-        """Insert chunks with section detection and embeddings"""
+        """Insert chunks with section detection and embeddings (batched for performance)"""
         chunk_ids = []
         use_ollama = os.getenv("USE_OLLAMA", "false").lower() == "true"
+        
+        # Generate all embeddings in one batch call (much faster)
+        chunk_texts = [chunk.text for chunk in chunks]
+        embeddings = generate_embeddings_batch(chunk_texts, prefer_ollama=use_ollama)
         
         with self.db.connect() as conn:
             trans = conn.begin()
             
             try:
-                for i, chunk in enumerate(chunks):
+                for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
                     section = self._determine_section(chunk.text)
                     
-                    # Generate embedding for chunk
-                    embedding = generate_embedding(chunk.text, prefer_ollama=use_ollama)
                     embedding_str = f"[{','.join(map(str, embedding))}]" if embedding else None
                     
                     insert_query = text("""
