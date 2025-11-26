@@ -1,5 +1,69 @@
 # Database Export and Import Guide
 
+## 🚀 Quick Start (For Backend Devs)
+
+**When you pull and there's a new dump file:**
+
+```powershell
+# 1. Pull latest code (gets the new dump file)
+git pull
+
+# 2. Wipe old database and restart (auto-restores new schema)
+docker-compose down -v
+docker-compose up -d
+
+# Done! Database auto-restores with the new schema.
+```
+
+---
+
+## 🔧 Schema Change Workflow (For DB Devs)
+
+**When you make schema changes (migrations, new tables, ALTER TABLE, etc.):**
+
+```powershell
+# 1. Make your schema changes directly in the running database
+#    (Run migrations, ALTER TABLE commands, CREATE TABLE, etc.)
+
+# 2. Export the updated dump
+docker exec legal_ai_postgres pg_dump -U postgres -d cases_llama3_3 -F c -f /tmp/cases_llama3_3.dump
+docker cp legal_ai_postgres:/tmp/cases_llama3_3.dump ./cases_llama3_3.dump
+
+# 3. Commit and push
+git add cases_llama3_3.dump
+git commit -m "Updated schema: added xyz table"
+git push
+```
+
+### Workflow Summary
+
+| DB Dev (Schema Changes)   | Backend Dev (Uses Schema) |
+| ------------------------- | ------------------------- |
+| Make schema changes in DB | `git pull`                |
+| Export new dump file      | `docker-compose down -v`  |
+| `git push`                | `docker-compose up -d`    |
+
+The dump file is the **single source of truth** for the database schema and data.
+
+---
+
+## How Auto-Restore Works
+
+The `docker-compose.yml` is configured to **automatically restore** the database from `cases_llama3_3.dump` on first startup:
+
+1. Container starts → PostgreSQL creates empty database
+2. `auto-restore.sh` runs → Restores the dump file (full schema + data)
+3. Database is ready with all tables!
+
+**Files involved:**
+
+- `cases_llama3_3.dump` - The database dump (source of truth)
+- `scripts/auto-restore.sh` - Auto-restore script
+
+> **Note:** Init scripts only run when the volume is empty. That's why you need `docker-compose down -v` to wipe the volume before restarting.
+
+---
+
 ## Export Database from Docker Container
 
 ```powershell

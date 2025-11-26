@@ -11,6 +11,9 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Auto-restore: runs on first startup only (dump contains full schema + data)
+      - ./scripts/auto-restore.sh:/docker-entrypoint-initdb.d/01-restore.sh:ro
+      - ./cases_llama3_3.dump:/docker-data/restore.dump:ro
     command: >
       postgres -c shared_preload_libraries=vector
       -c max_connections=200
