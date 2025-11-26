@@ -35,6 +35,24 @@ git commit -m "Updated schema: added xyz table"
 git push
 ```
 
+### ⚠️ Important: Volume Persistence
+
+```powershell
+# ✅ SAFE - Your data persists (use this normally)
+docker-compose down
+docker-compose up -d
+
+# ❌ DANGER - Wipes your database! (only use to restore from dump)
+docker-compose down -v    # -v deletes the volume!
+docker-compose up -d
+```
+
+**As a DB dev:**
+
+- Use `docker-compose down` (without `-v`) to stop/restart - your data stays safe
+- Only use `-v` if you want to reset to the dump file
+- Always export your dump BEFORE using `-v`
+
 ### Workflow Summary
 
 | DB Dev (Schema Changes)   | Backend Dev (Uses Schema) |
