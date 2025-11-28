@@ -13,14 +13,54 @@ The `issues_decisions` table stored `category` and `subcategory` as raw text str
 Created a self-referencing `issue_taxonomy` table with 3 levels:
 
 ```
-Family Law (Level 0)
+Family Law (Level 0 - Root)
+│
 ├── Property Division / Debt Allocation (Level 1)
-│   ├── Division fairness (Level 2)
-│   ├── Valuation of assets (Level 2)
-│   └── ...
+│   ├── Division fairness (229 issues)
+│   ├── Valuation of assets (179 issues)
+│   ├── Characterization - community vs. separate (71 issues)
+│   ├── Omitted assets or debts (35 issues)
+│   └── Tax consequences ignored (2 issues)
+│
+├── Spousal Support / Maintenance (Level 1)
+│   ├── Amount calculation errors (105 issues)
+│   ├── Duration - temp vs. permanent (50 issues)
+│   ├── Failure to consider statutory factors (7 issues)
+│   └── Imputed income disputes (5 issues)
+│
 ├── Child Support (Level 1)
-│   └── ...
-└── ...
+│   ├── Income determination / imputation (174 issues)
+│   ├── Retroactive support (41 issues)
+│   ├── Deviations from standard calculation (40 issues)
+│   └── Allocation of expenses (32 issues)
+│
+├── Parenting Plan / Custody / Visitation (Level 1)
+│   ├── Residential schedule (109 issues)
+│   ├── Restrictions - DV, SA, etc. (100 issues)
+│   ├── Decision-making authority (70 issues)
+│   └── Relocation disputes (40 issues)
+│
+├── Attorney Fees & Costs (Level 1)
+│   └── Fee awards (171 issues)
+│
+├── Procedural & Evidentiary Issues (Level 1)
+│   ├── Abuse of discretion (202 issues)
+│   ├── Improper evidentiary rulings (120 issues)
+│   ├── Denial of due process (19 issues)
+│   └── Failure to enter findings/conclusions (15 issues)
+│
+├── Enforcement & Contempt Orders (Level 1)
+│   ├── Willfulness findings (20 issues)
+│   └── Sanctions (2 issues)
+│
+├── Jurisdiction & Venue (Level 1)
+│   ├── Subject matter jurisdiction (21 issues)
+│   └── Personal jurisdiction (5 issues)
+│
+└── Miscellaneous / Unclassified (Level 1)
+    ├── Meretricious Relationship (3 issues)
+    ├── ERISA and Safe Harbor Provision (3 issues)
+    └── 200+ other rare subcategories
 ```
 
 ## Changes
