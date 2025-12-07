@@ -245,10 +245,31 @@ def extract_case_type_regex(text: str) -> str:
     text_lower = text.lower()
     header_lower = text_lower[:10000]  # First 10000 chars for context
     
-    # Criminal case patterns
+    # First check for civil cases where State is DEFENDANT (sued by plaintiff)
+    # Pattern: "Plaintiff v. State of Washington" or "v. State of Washington, Defendant"
+    if re.search(r'v\.\s*(?:the\s+)?state of washington\s*,?\s*(?:d/b/a|defendant)', header_lower):
+        return 'civil'
+    # Certified questions from federal courts are civil matters
+    if 'certification from' in header_lower or 'certified question' in header_lower:
+        return 'civil'
+    # Title IX, negligence, duty of care = tort/civil
+    if 'title ix' in header_lower or 'duty of care' in header_lower or 'duty to protect' in header_lower:
+        return 'tort'
+    if 'negligence' in header_lower or 'negligent' in header_lower:
+        return 'tort'
+    
+    # Criminal case patterns - State is PROSECUTOR/RESPONDENT (prosecuting defendant)
+    # Pattern: "State of Washington, Respondent v. [Defendant]"
     if re.search(r'state of washington\s*,?\s*respondent\s*,?\s*v\.', header_lower):
         return 'criminal'
+    # Pattern: "State of Washington v. [Defendant], Appellant"
+    if re.search(r'state of washington\s*,?\s*v\.\s*[^,]+,?\s*appellant', header_lower):
+        return 'criminal'
     if 'unlawful possession' in header_lower or 'convicted of' in header_lower:
+        return 'criminal'
+    if 'criminal' in header_lower and 'conviction' in header_lower:
+        return 'criminal'
+    if 'felony' in header_lower or 'misdemeanor' in header_lower:
         return 'criminal'
     
     # Estate/Probate patterns
@@ -256,18 +277,22 @@ def extract_case_type_regex(text: str) -> str:
         return 'estate'
     if 'probate' in header_lower or 'personal representative' in header_lower:
         return 'estate'
+    if 'tedra' in header_lower or 'trust and estate' in header_lower:
+        return 'estate'
     
     # Divorce/Family patterns
     if 'in re marriage' in header_lower or 'dissolution' in header_lower:
         return 'divorce'
     if 'child support' in header_lower or 'parenting plan' in header_lower:
         return 'family'
+    if 'custody' in header_lower or 'visitation' in header_lower:
+        return 'family'
     
-    # Civil patterns - general
+    # Civil patterns - general (after checking criminal)
     if 'd/b/a' in header_lower or 'university' in header_lower:
         return 'civil'
-    if 'title ix' in header_lower or 'negligence' in header_lower:
-        return 'tort'
+    if 'breach of contract' in header_lower or 'breach of fiduciary' in header_lower:
+        return 'civil'
     
     # Default
     return 'civil'
@@ -275,19 +300,77 @@ def extract_case_type_regex(text: str) -> str:
 
 def extract_county_regex(text: str) -> Optional[str]:
     """Extract county information using regex patterns."""
-    # Look for "Appeal from [County] Superior Court" or "[County] County Superior Court"
+    
+    # Washington State city-to-county mapping for common cities
+    city_to_county = {
+        'seattle': 'King',
+        'tacoma': 'Pierce',
+        'spokane': 'Spokane',
+        'vancouver': 'Clark',
+        'bellevue': 'King',
+        'everett': 'Snohomish',
+        'kent': 'King',
+        'renton': 'King',
+        'spokane valley': 'Spokane',
+        'federal way': 'King',
+        'yakima': 'Yakima',
+        'bellingham': 'Whatcom',
+        'kennewick': 'Benton',
+        'auburn': 'King',
+        'pasco': 'Franklin',
+        'marysville': 'Snohomish',
+        'lakewood': 'Pierce',
+        'redmond': 'King',
+        'richland': 'Benton',
+        'olympia': 'Thurston',
+        'bremerton': 'Kitsap',
+        'pullman': 'Whitman',
+        'moses lake': 'Grant',
+        'longview': 'Cowlitz',
+        'wenatchee': 'Chelan',
+        'walla walla': 'Walla Walla',
+        'ellensburg': 'Kittitas',
+        'port angeles': 'Clallam',
+        'tri-cities': 'Benton',
+        'mount vernon': 'Skagit',
+        'anacortes': 'Skagit',
+    }
+    
+    # Look for explicit county references first
     patterns = [
-        r'Appeal from\s+([A-Za-z]+)\s+(?:County\s+)?Superior Court',
+        r'Appeal from\s+(?:the\s+)?([A-Za-z]+(?:\s+[A-Za-z]+)?)\s+County\s+Superior Court',
+        r'Appeal from\s+(?:the\s+)?Superior Court\s+(?:of|for)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\s+County',
         r'([A-Za-z]+)\s+County\s+Superior Court',
         r'Superior Court of\s+([A-Za-z]+)\s+County',
+        r'Superior Court for\s+([A-Za-z]+)\s+County',
+        r'filed in\s+([A-Za-z]+)\s+County',
+        r'tried in\s+([A-Za-z]+)\s+County',
     ]
     
+    text_to_search = text[:10000]  # Expand search area
+    
     for pattern in patterns:
-        match = re.search(pattern, text[:5000], re.IGNORECASE)
+        match = re.search(pattern, text_to_search, re.IGNORECASE)
         if match:
             county = match.group(1).strip().title()
-            if county.lower() not in ['the', 'a', 'an', 'of']:
-                return f"{county} County"
+            if county.lower() not in ['the', 'a', 'an', 'of', 'state', 'washington']:
+                return county
+    
+    # If no explicit county found, try to find city names and map to counties
+    text_lower = text_to_search.lower()
+    for city, county in city_to_county.items():
+        # Look for city name in context that suggests location
+        # e.g., "Moses Lake Police Department" or "in Moses Lake"
+        city_patterns = [
+            rf'{city}\s+police\s+department',
+            rf'{city}\s+police',
+            rf'in\s+{city}',
+            rf'at\s+{city}',
+            rf'{city}\s+(?:city|municipal)',
+        ]
+        for city_pattern in city_patterns:
+            if re.search(city_pattern, text_lower):
+                return county
     
     return None
 

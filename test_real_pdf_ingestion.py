@@ -41,35 +41,47 @@ test_pdfs = [
         'category': 'Supreme Court',
         'metadata': {
             'case_number': '101,045-1',
-            'title': 'Barlow v. State',
-            'court_level': 'Supreme Court',
+            'case_title': 'Barlow v. State',  # From metadata CSV
+            'opinion_type': 'Supreme Court',  # This is what hybrid extractor checks
             'division': '',
-            'publication': 'Published',
-            'publication_status': 'Published'
+            'publication_status': 'Published',
+            'year': '2024',
+            'month': 'January',
+            'file_date': 'Jan. 04, 2024',
+            'case_info_url': 'https://www.courts.wa.gov/opinions/index.cfm?fa=opinions.showOpinion&filename=1010451MAJ',
+            'pdf_url': 'https://www.courts.wa.gov/opinions/pdf/1010451.pdf'
         }
     },
     {
         'path': Path('downloads/Court_of_Appeals_Published/2024/January/83404-5_I.pdf'),
         'category': 'Court of Appeals Published',
         'metadata': {
-            'case_number': '83404-5-I',
-            'title': 'Case 83404-5-I',
-            'court_level': 'Court of Appeals',
+            'case_number': '83404-5',
+            'case_title': 'Diana M. Ferara, Respondent V. Kristy, Johnny, Nancy & Alicia Ferara, Appellants',  # From metadata CSV
+            'opinion_type': 'Court of Appeals',
             'division': 'I',
-            'publication': 'Published',
-            'publication_status': 'Published'
+            'publication_status': 'Published',
+            'year': '2024',
+            'month': 'January',
+            'file_date': 'Jan. 16, 2024',
+            'case_info_url': 'https://www.courts.wa.gov/opinions/index.cfm?fa=opinions.showOpinion&filename=834045MAJ',
+            'pdf_url': 'https://www.courts.wa.gov/opinions/pdf/834045orderandopinion.pdf'
         }
     },
     {
         'path': Path('downloads/Court_of_Appeals_Published_in_Part/2024/January/39019-5_III.pdf'),
         'category': 'Court of Appeals Partially Published',
         'metadata': {
-            'case_number': '39019-5-III',
-            'title': 'Case 39019-5-III',
-            'court_level': 'Court of Appeals',
+            'case_number': '39019-5',
+            'case_title': 'State of Washington v. Jarod Roland Taylor',  # From metadata CSV
+            'opinion_type': 'Court of Appeals',
             'division': 'III',
-            'publication': 'Partially Published',
-            'publication_status': 'Published in Part'
+            'publication_status': 'Published in Part',
+            'year': '2024',
+            'month': 'January',
+            'file_date': 'Jan. 23, 2024',
+            'case_info_url': 'https://www.courts.wa.gov/opinions/index.cfm?fa=opinions.showOpinion&filename=390195MAJ',
+            'pdf_url': 'https://www.courts.wa.gov/opinions/pdf/390195_pub.pdf'
         }
     }
 ]

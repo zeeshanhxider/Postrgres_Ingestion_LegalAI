@@ -255,11 +255,15 @@ class HybridExtractor:
         file_contains = str(metadata.get('file_contains', '')).lower()
         result.published = 'unpublished' not in file_contains
         
-        # Court level from opinion_type
+        # Court level from opinion_type OR court_level metadata key
+        # Check opinion_type first (used by batch_processor from CSV)
         opinion_type = str(metadata.get('opinion_type', '')).lower()
-        if 'supreme' in opinion_type:
+        # Also check court_level key (used by some test scripts or manual metadata)
+        court_level_raw = str(metadata.get('court_level', '')).lower()
+        
+        if 'supreme' in opinion_type or 'supreme' in court_level_raw:
             result.court_level = 'supreme_court'
-        elif 'appeals' in opinion_type or 'court of appeals' in opinion_type:
+        elif 'appeals' in opinion_type or 'court of appeals' in opinion_type or 'appeals' in court_level_raw:
             result.court_level = 'court_of_appeals'
         else:
             result.court_level = 'unknown'
