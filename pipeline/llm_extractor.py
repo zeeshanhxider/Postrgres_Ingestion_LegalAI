@@ -17,78 +17,68 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 # System prompt for legal case extraction
-SYSTEM_PROMPT = """You are an expert legal document analyzer. Extract structured data from Washington State court opinions.
+SYSTEM_PROMPT = """You are an expert legal document analyzer for Washington State case law. Extract structured data from the provided court opinion into valid JSON format.
 
 CRITICAL RULES:
-1. Extract ONLY information explicitly stated in the document
-2. If information is not found, use null - NEVER invent data
-3. Be precise with names, dates, and legal terms
+1. Extract ONLY information explicitly stated in the document text.
+2. If information is not found, use null.
+3. Do not Hallucinate or guess relationships (e.g., do not guess which party "won" if it is a complex split decision).
+4. Escape all double quotes within strings to ensure the output is parseable JSON.
+5. Do not include markdown formatting (```json) in your response; return raw JSON only."""
 
-OUTPUT FORMAT: Return valid JSON only, no markdown code blocks."""
-
-# Extraction prompt template
-EXTRACTION_PROMPT = """Analyze this Washington State court opinion and extract the following information as JSON.
+EXTRACTION_PROMPT = """Analyze this Washington State court opinion and extract the following deep-level case details.
 
 CASE TEXT:
 {text}
 
-Extract this JSON structure (use null for missing fields):
+Extract this JSON structure:
 {{
-    "summary": "2-3 sentence summary of what this case is about",
-    "case_type": "criminal|civil|family|estate|administrative|tort|contract|property|employment|other",
-    "county": "County name where case originated (e.g., 'King', 'Pierce')",
-    "trial_court": "Full name of lower court (e.g., 'King County Superior Court')",
-    "trial_judge": "Name of trial court judge if mentioned",
-    "source_docket_number": "Lower court case/docket number if mentioned (e.g., '21-2-12345-6')",
-    "appeal_outcome": "affirmed|reversed|remanded|dismissed|affirmed in part|reversed in part|other",
-    "outcome_detail": "More detailed outcome description if applicable",
-    "winner_legal_role": "Who won this appeal: Plaintiff|Defendant|Appellant|Respondent|Petitioner|Neither|Split",
-    "winner_personal_role": "Personal role of winner: Employee|Employer|Landlord|Tenant|Patient|Doctor|Buyer|Seller|Insured|Insurer|Injured Party|Defendant Company|Property Owner|Government|Criminal Defendant|Prosecution|Other",
-    "parties": [
+    "summary": "Comprehensive 5-6 sentence summary covering the core points of the case. This must include: 1) The key background facts (what happened?), 2) The procedural history (how did it get to this court?), 3) The primary legal issues raised, 4) The court's reasoning on those issues, and 5) The final disposition.",
+    "case_category": "Criminal|Civil|Family|Administrative|Juvenile|Real Property|Tort|Contract|Constitutional|Employment|Other",
+    "originating_court": {{
+        "county": "County where the case originated (e.g., 'King', 'Spokane')",
+        "court_name": "Full name of lower court (e.g., 'King County Superior Court')",
+        "trial_judge": "Name of the trial court judge if mentioned",
+        "source_docket_number": "Lower court case number if mentioned"
+    }},
+    "outcome": {{
+        "disposition": "Affirmed|Reversed|Remanded|Dismissed|Affirmed in part/Reversed in part|Other",
+        "details": "Specific details (e.g., 'Conviction affirmed, but remanded for resentencing due to offender score error')",
+        "prevailing_party": "Appellant|Respondent|Petitioner|Plaintiff|Defendant|Split/Remanded|Neither"
+    }},
+    "parties_parsed": [
         {{
-            "name": "Full party name",
-            "role": "Appellant|Respondent|Petitioner|Plaintiff|Defendant|Cross-Appellant",
-            "party_type": "Individual|Corporation|Government|Estate|Organization"
+            "name": "Full party name (e.g., 'Justin Dean Vanhollebeke')",
+            "appellate_role": "Appellant|Respondent|Petitioner|Cross-Appellant",
+            "trial_role": "Plaintiff|Defendant|State|Intervenor|null",
+            "type": "Individual|Government|Corporation|Organization|Union"
         }}
     ],
-    "attorneys": [
+    "legal_representation": [
         {{
-            "name": "Attorney name",
+            "attorney_name": "Name of attorney",
             "representing": "Name of party they represent",
-            "firm_name": "Law firm name if mentioned"
+            "firm_or_agency": "Law firm, Prosecutor's Office, or Agency name"
         }}
     ],
-    "judges": [
+    "judicial_panel": [
         {{
-            "name": "Judge last name",
-            "role": "Author|Concurring|Dissenting|Pro Tem|Chief Justice"
+            "judge_name": "Last name of appellate judge",
+            "role": "Author|Concurring|Dissenting|Signatory (e.g., 'WE CONCUR')"
         }}
     ],
-    "citations": [
-        {{
-            "full_citation": "123 Wn.2d 456",
-            "case_name": "Case name if provided",
-            "relationship": "followed|distinguished|cited|overruled"
-        }}
-    ],
-    "statutes": [
-        {{
-            "citation": "RCW 49.62.070",
-            "title": "Brief description if provided"
-        }}
-    ],
-    "issues": [
-        {{
-            "category": "Criminal Law|Civil Procedure|Evidence|Constitutional Law|Family Law|Property|Contracts|Torts|Employment|Administrative|Other",
-            "subcategory": "Specific sub-issue type",
-            "summary": "Brief description of the legal issue",
-            "outcome": "affirmed|reversed|remanded",
-            "winner": "Appellant|Respondent"
-        }}
-    ]
-}}
-
-Return ONLY valid JSON, no explanation or markdown."""
+    "legal_analysis": {{
+        "key_statutes_cited": [
+            "List of specific RCWs cited (e.g., 'RCW 9.94A.525', 'RCW 42.17A.765')"
+        ],
+        "major_issues": [
+            {{
+                "question": "Brief summary of the legal question (e.g., 'Was the warrantless search of the borrowed truck lawful?')",
+                "ruling": "How the court answered (e.g., 'Yes, the owner's consent overrode the borrower's objection.')"
+            }}
+        ]
+    }}
+}}"""
 
 
 class LLMExtractor:
