@@ -62,6 +62,23 @@ def main():
         action='store_true',
         help='Enable verbose logging'
     )
+    parser.add_argument(
+        '--chunk-embedding',
+        choices=['all', 'important', 'none'],
+        default='all',
+        help='Chunk embedding mode: all (default), important (ANALYSIS/FACTS/HOLDING only), none'
+    )
+    parser.add_argument(
+        '--phrase-filter',
+        choices=['strict', 'relaxed'],
+        default='strict',
+        help='Phrase filtering mode: strict (legal terms only) or relaxed (all meaningful)'
+    )
+    parser.add_argument(
+        '--no-rag',
+        action='store_true',
+        help='Skip RAG processing (chunks, sentences, words, phrases)'
+    )
     
     args = parser.parse_args()
     
@@ -100,7 +117,21 @@ def main():
     # Initialize database inserter if needed
     inserter = None
     if not args.no_db:
-        inserter = DatabaseInserter.from_url(config.database_url)
+        inserter = DatabaseInserter.from_url(
+            config.database_url,
+            enable_rag=not args.no_rag
+        )
+        
+        # Configure RAG options if RAG is enabled
+        if not args.no_rag:
+            inserter.configure_rag(
+                chunk_embedding_mode=args.chunk_embedding,
+                phrase_filter_mode=args.phrase_filter
+            )
+            logger.info(f"RAG: chunks={args.chunk_embedding}, phrases={args.phrase_filter}")
+        else:
+            logger.info("RAG: Disabled")
+        
         logger.info(f"Database connected. Current cases: {inserter.get_case_count()}")
     
     source_path = Path(args.source)

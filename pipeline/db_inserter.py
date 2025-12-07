@@ -1,6 +1,8 @@
 """
 Database Inserter - Clean SQL insertion for extracted cases
 Maps ExtractedCase to the database schema.
+
+Integrates with RAG processor for full indexing pipeline.
 """
 
 import os
@@ -9,8 +11,10 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+import psycopg2
 
 from .models import ExtractedCase, Party, Attorney, Judge, Citation, Statute, Issue
+from .dimension_service import DimensionService
 
 logger = logging.getLogger(__name__)
 
@@ -39,31 +43,79 @@ class DatabaseInserter:
     """
     Insert extracted case data into PostgreSQL database.
     Uses simple, direct SQL - no ORM complexity.
+    
+    Integrates with DimensionService for FK resolution and
+    optionally with RAGProcessor for full indexing.
     """
     
-    def __init__(self, db_engine: Engine):
+    def __init__(self, db_engine: Engine, enable_rag: bool = True):
         """
         Initialize with database engine.
         
         Args:
             db_engine: SQLAlchemy engine instance
+            enable_rag: Whether to enable RAG processing
         """
         self.db = db_engine
+        self.enable_rag = enable_rag
+        self._dimension_service = None
+        self._rag_processor = None
     
     @classmethod
-    def from_url(cls, database_url: str) -> 'DatabaseInserter':
+    def from_url(cls, database_url: str, enable_rag: bool = True) -> 'DatabaseInserter':
         """
         Create inserter from database URL.
         
         Args:
             database_url: PostgreSQL connection string
+            enable_rag: Whether to enable RAG processing
         """
         engine = create_engine(database_url)
-        return cls(engine)
+        return cls(engine, enable_rag=enable_rag)
+    
+    def _get_psycopg2_connection(self):
+        """Get a psycopg2 connection from SQLAlchemy URL."""
+        url = self.db.url
+        return psycopg2.connect(
+            host=url.host,
+            port=url.port or 5432,
+            database=url.database,
+            user=url.username,
+            password=url.password
+        )
+    
+    def _get_dimension_service(self, conn) -> DimensionService:
+        """Get or create dimension service."""
+        if self._dimension_service is None:
+            # DimensionService uses SQLAlchemy Engine, not psycopg2
+            self._dimension_service = DimensionService(self.db)
+        return self._dimension_service
+    
+    def configure_rag(
+        self,
+        chunk_embedding_mode: str = "all",
+        phrase_filter_mode: str = "strict"
+    ):
+        """
+        Configure RAG processor options.
+        
+        Args:
+            chunk_embedding_mode: "all", "important", or "none"
+            phrase_filter_mode: "strict" or "relaxed"
+        """
+        from .rag_processor import create_rag_processor
+        
+        pg_conn = self._get_psycopg2_connection()
+        self._rag_processor = create_rag_processor(
+            pg_conn,
+            chunk_embedding_mode=chunk_embedding_mode,
+            phrase_filter_mode=phrase_filter_mode
+        )
     
     def insert_case(self, case: ExtractedCase) -> Optional[int]:
         """
         Insert a complete case with all related entities.
+        Optionally runs RAG processing for chunks, sentences, words, phrases.
         
         Args:
             case: ExtractedCase object with all data
@@ -112,6 +164,11 @@ class DatabaseInserter:
                     
                     trans.commit()
                     logger.info(f"Successfully committed case {case_id}")
+                    
+                    # 8. Run RAG processing if enabled
+                    if self.enable_rag and case.full_text:
+                        self._run_rag_processing(case_id, case)
+                    
                     return case_id
                     
                 except Exception as e:
@@ -122,6 +179,40 @@ class DatabaseInserter:
         except Exception as e:
             logger.error(f"Database error: {e}")
             return None
+    
+    def _run_rag_processing(self, case_id: int, case: ExtractedCase):
+        """
+        Run RAG processing for a case.
+        Creates chunks, sentences, words, phrases, and embeddings.
+        """
+        try:
+            # Lazy-load RAG processor with default settings
+            if self._rag_processor is None:
+                from .rag_processor import create_rag_processor
+                pg_conn = self._get_psycopg2_connection()
+                self._rag_processor = create_rag_processor(pg_conn)
+            
+            # Process the case
+            result = self._rag_processor.process_case_sync(
+                case_id,
+                case.full_text,
+                metadata=None  # Could pass case.metadata if needed
+            )
+            
+            logger.info(
+                f"RAG processing for case {case_id}: "
+                f"{result.chunks_created} chunks, {result.sentences_created} sentences, "
+                f"{result.words_indexed} words, {result.phrases_extracted} phrases, "
+                f"{result.embeddings_generated} embeddings"
+            )
+            
+            if result.errors:
+                for err in result.errors:
+                    logger.warning(f"RAG processing error: {err}")
+                    
+        except Exception as e:
+            logger.error(f"RAG processing failed for case {case_id}: {e}")
+            # Don't fail the whole insert if RAG fails
     
     def _insert_case_record(self, conn, case: ExtractedCase) -> int:
         """Insert main case record and return case_id."""
@@ -138,8 +229,15 @@ class DatabaseInserter:
             if full_embedding:
                 logger.info(f"Generated {len(full_embedding)}-dim embedding")
         
-        # Resolve court_id from courts_dim
-        court_id = self._get_or_create_court_id(conn, case, meta)
+        # Use DimensionService for all FK resolution
+        dim_service = self._get_dimension_service(conn)
+        dimension_ids = dim_service.resolve_all_dimensions(
+            case_type=case.case_type,
+            opinion_type=meta.opinion_type,
+            court_level=meta.court_level,
+            division=meta.division,
+            county=case.county
+        )
         
         query = text("""
             INSERT INTO cases (
@@ -153,7 +251,7 @@ class DatabaseInserter:
                 opinion_type, publication_status, 
                 decision_year, decision_month,
                 case_type, source_file, source_file_path,
-                court_id,
+                court_id, case_type_id, stage_type_id,
                 extraction_timestamp, processing_status,
                 created_at, updated_at
             ) VALUES (
@@ -167,7 +265,7 @@ class DatabaseInserter:
                 :opinion_type, :publication_status,
                 :decision_year, :decision_month,
                 :case_type, :source_file, :source_file_path,
-                :court_id,
+                :court_id, :case_type_id, :stage_type_id,
                 :extraction_timestamp, :processing_status,
                 :created_at, :updated_at
             )
@@ -220,7 +318,9 @@ class DatabaseInserter:
             'case_type': case.case_type or None,
             'source_file': meta.pdf_filename or None,
             'source_file_path': case.source_file_path,
-            'court_id': court_id,
+            'court_id': dimension_ids.get('court_id'),
+            'case_type_id': dimension_ids.get('case_type_id'),
+            'stage_type_id': dimension_ids.get('stage_type_id'),
             'extraction_timestamp': case.extraction_timestamp or now,
             'processing_status': 'ai_processed' if case.extraction_successful else 'failed',
             'created_at': now,
