@@ -56,15 +56,22 @@ Extract this JSON structure:
     ],
     "legal_representation": [
         {{
-            "attorney_name": "Name of attorney",
-            "representing": "Name of party they represent",
-            "firm_or_agency": "Law firm, Prosecutor's Office, or Agency name"
+            "attorney_name": "Full name of attorney (e.g., 'John Smith'). Look for attorney names under 'FOR APPELLANT', 'FOR RESPONDENT' or 'COUNSEL OF RECORD' sections.",
+            "representing": "Name of party they represent (e.g., 'State of Washington', 'John Doe')",
+            "firm_or_agency": "Law firm name, Prosecutor's Office, Public Defender, or Agency (e.g., 'King County Prosecutor', 'Nielsen Koch PLLC', 'Washington Appellate Project')"
         }}
     ],
     "judicial_panel": [
         {{
             "judge_name": "Last name of appellate judge",
             "role": "Author|Concurring|Dissenting|Signatory (e.g., 'WE CONCUR')"
+        }}
+    ],
+    "cases_cited": [
+        {{
+            "full_citation": "Full case citation as it appears (e.g., 'State v. Smith, 150 Wn.2d 489, 78 P.3d 1014 (2003)')",
+            "case_name": "Short name (e.g., 'State v. Smith')",
+            "relationship": "How this case relates to the opinion: 'relied_upon' (court relies on it), 'distinguished' (court distinguishes it), 'cited' (general citation), 'overruled' (court overrules it)"
         }}
     ],
     "legal_analysis": {{
@@ -94,7 +101,7 @@ class LLMExtractor:
         self,
         model: str = None,
         base_url: str = None,
-        timeout: int = 120
+        timeout: int = 300
     ):
         """
         Initialize the LLM extractor.
@@ -112,27 +119,31 @@ class LLMExtractor:
     
     def _strip_slip_opinion_notice(self, text: str) -> str:
         """
-        Remove the standard "NOTICE: SLIP OPINION" cover page that appears
-        at the start of many Washington State court PDFs.
+        Remove the standard "NOTICE: SLIP OPINION" boilerplate that appears
+        on every page of many Washington State court PDFs.
         
-        This page is boilerplate and adds noise for LLM extraction.
+        This is noise for LLM extraction.
         """
         import re
         
         original_len = len(text)
         
-        # Check if text starts with the slip opinion notice
-        if 'NOTICE: SLIP OPINION' in text[:500] or 'NOTICE:  SLIP OPINION' in text[:500]:
-            # Find where the actual court content starts
-            # Look for "IN THE COURT OF APPEALS" or "IN THE SUPREME COURT" patterns
-            court_match = re.search(
-                r'\n\s*(FILED\s*\n.*?)?IN THE (?:SUPREME )?COURT',
-                text,
-                re.DOTALL | re.IGNORECASE
-            )
-            if court_match:
-                text = text[court_match.start():].lstrip()
-                logger.debug(f"Stripped slip opinion notice: {original_len - len(text)} chars removed")
+        # Remove ALL occurrences of the slip opinion notice (appears on every page with pdfplumber)
+        # Pattern: "NOTICE: SLIP OPINION (not the court's final written decision)..." up to end of that line/paragraph
+        text = re.sub(
+            r'NOTICE:\s*SLIP OPINION\s*\(not the court\'s final written decision\)[^\n]*(?:\n[^\n]*(?:slip opinion|written opinions|subject to revision)[^\n]*)*',
+            '',
+            text,
+            flags=re.IGNORECASE
+        )
+        
+        # Also remove simpler variants
+        text = re.sub(
+            r'NOTICE:\s*SLIP OPINION[^\n]*\n?',
+            '',
+            text,
+            flags=re.IGNORECASE
+        )
         
         # Remove repeated "For the current opinion" lines throughout the document
         text = re.sub(
@@ -141,7 +152,13 @@ class LLMExtractor:
             text
         )
         
-        return text
+        # Clean up multiple blank lines left behind
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        
+        if len(text) < original_len:
+            logger.debug(f"Stripped slip opinion notices: {original_len - len(text)} chars removed")
+        
+        return text.strip()
     
     def extract(self, text: str, max_chars: int = 30000) -> Dict[str, Any]:
         """
@@ -466,7 +483,11 @@ class LLMExtractor:
             llm_result["judges"] = llm_result["judicial_panel"]
         # legal_representation -> attorneys
         if "legal_representation" in llm_result and "attorneys" not in llm_result:
+            logger.info(f"Normalizing legal_representation -> attorneys: {len(llm_result['legal_representation'])} entries")
             llm_result["attorneys"] = llm_result["legal_representation"]
+        # cases_cited -> citations
+        if "cases_cited" in llm_result and "citations" not in llm_result:
+            llm_result["citations"] = llm_result["cases_cited"]
         # originating_court nested fields
         if "originating_court" in llm_result and isinstance(llm_result["originating_court"], dict):
             orig = llm_result["originating_court"]

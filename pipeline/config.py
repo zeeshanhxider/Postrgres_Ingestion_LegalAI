@@ -28,7 +28,7 @@ class PipelineConfig:
     
     # Processing settings
     max_text_chars: int = 30000      # Max chars to send to LLM
-    llm_timeout: int = 120           # LLM request timeout in seconds
+    llm_timeout: int = 300           # LLM request timeout in seconds
     
     @classmethod
     def from_env(cls) -> 'PipelineConfig':
@@ -43,7 +43,7 @@ class PipelineConfig:
             ollama_model=os.getenv("OLLAMA_MODEL", "qwen:32b"),
             ollama_embedding_model=os.getenv("OLLAMA_EMBEDDING_MODEL", "mxbai-embed-large"),
             max_text_chars=int(os.getenv("MAX_TEXT_CHARS", "30000")),
-            llm_timeout=int(os.getenv("LLM_TIMEOUT", "120")),
+            llm_timeout=int(os.getenv("LLM_TIMEOUT", "300")),
         )
     
     def validate(self) -> bool:
