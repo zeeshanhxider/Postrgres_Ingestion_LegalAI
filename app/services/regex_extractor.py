@@ -47,33 +47,33 @@ class ExtractedParty:
 
 @dataclass
 class RegexExtractionResult:
-    """Complete extraction result from regex parsing"""
-    # From metadata
-    case_number: str = ""
-    case_name: str = ""
-    decision_date: Optional[datetime] = None
-    year: Optional[int] = None
-    month: Optional[str] = None
-    pdf_url: str = ""
-    case_info_url: str = ""
+    """
+    Result from regex-based PDF extraction.
     
-    # From PDF regex extraction
-    court_level: str = ""  # 'supreme_court', 'court_of_appeals'
+    NOTE: This contains ONLY fields extracted via regex from PDF text.
+    Metadata fields (case_number, case_title, file_date, pdf_url, etc.)
+    are used DIRECTLY from the metadata dict in database_inserter.py.
+    
+    This avoids redundant copying - metadata is the source of truth for:
+    - case_number, case_title, year, month, file_date
+    - file_contains (publication status), pdf_url, case_info_url
+    """
+    
+    # === EXTRACTED FROM PDF TEXT (regex patterns) ===
+    court_level: str = ""  # 'supreme_court', 'court_of_appeals', 'unknown'
     division: Optional[str] = None  # 'division_one', 'division_two', 'division_three'
-    publication_status: str = "published"
-    filed_date: Optional[datetime] = None
     
-    # Outcome
+    # Outcome (from document footer)
     appeal_outcome: Optional[str] = None  # 'affirmed', 'reversed', 'remanded', 'dismissed'
     outcome_detail: Optional[str] = None  # 'affirmed in part', 'reversed and remanded'
     
     # Extracted entities
     judges: List[ExtractedJudge] = field(default_factory=list)
-    parties: List[ExtractedParty] = field(default_factory=list)
+    parties: List[ExtractedParty] = field(default_factory=list)  # Parsed from case title
     citations: List[ExtractedCitation] = field(default_factory=list)
     statutes: List[ExtractedStatute] = field(default_factory=list)
     
-    # County (if found)
+    # County (from Superior Court reference in text)
     county: Optional[str] = None
     
     # En banc flag
@@ -237,20 +237,12 @@ class RegexExtractor:
         # Normalize text once for all extractions
         normalized = self._normalize_text(full_text)
         
-        # === METADATA (no regex needed) ===
-        result.case_number = str(metadata.get('case_number', ''))
-        result.case_name = metadata.get('case_title', metadata.get('case_name', ''))
-        result.year = metadata.get('year')
-        result.month = metadata.get('month')
-        result.pdf_url = metadata.get('pdf_url', '')
-        result.case_info_url = metadata.get('case_info_url', '')
+        # NOTE: Metadata fields (case_number, case_title, file_date, pdf_url, etc.)
+        # are NOT copied here - they are used DIRECTLY from metadata in database_inserter.py
+        # This avoids redundant data copying.
         
-        if metadata.get('file_date'):
-            result.decision_date = self._parse_date(metadata['file_date'])
-        
-        # Determine publication status from metadata
-        file_contains = str(metadata.get('file_contains', '')).lower()
-        result.publication_status = 'unpublished' if 'unpublished' in file_contains else 'published'
+        # Get case_title for party extraction (need it here for parsing)
+        case_title = metadata.get('case_title', metadata.get('case_name', ''))
         
         # === HEADER EXTRACTION (first 3000 chars) ===
         header = normalized[:3000]
@@ -273,21 +265,14 @@ class RegexExtractor:
                 'THREE': 'division_three', '3': 'division_three', 'III': 'division_three',
             }.get(div)
         
-        # Filed date
-        filed_match = self.filed_date_re.search(header)
-        if filed_match:
-            result.filed_date = self._parse_date(filed_match.group(1))
-            if not result.decision_date:
-                result.decision_date = result.filed_date
-        
         # En banc
         result.en_banc = bool(self.en_banc_re.search(header))
         
         # === JUDGE EXTRACTION ===
         result.judges = self._extract_judges(normalized, header)
         
-        # === PARTY EXTRACTION (from case title) ===
-        result.parties = self._extract_parties(result.case_name, header)
+        # === PARTY EXTRACTION (from case title in metadata) ===
+        result.parties = self._extract_parties(case_title, header)
         
         # === OUTCOME (last 5000 chars) ===
         footer = normalized[-5000:] if len(normalized) > 5000 else normalized
@@ -302,7 +287,8 @@ class RegexExtractor:
         if county_match:
             result.county = county_match.group(1).title()
         
-        logger.info(f"Regex extraction: {result.case_number} - "
+        case_number = metadata.get('case_number', 'unknown')
+        logger.info(f"Regex extraction: {case_number} - "
                    f"{len(result.judges)} judges, {len(result.citations)} citations, "
                    f"{len(result.statutes)} RCWs, outcome={result.appeal_outcome}")
         

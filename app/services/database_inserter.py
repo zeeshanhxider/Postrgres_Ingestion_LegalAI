@@ -429,11 +429,18 @@ class DatabaseInserter:
     def insert_regex_extraction(self, regex_result, metadata: Dict[str, Any] = None,
                                  source_file_info: Dict[str, str] = None) -> Optional[int]:
         """
-        Insert case data from regex extraction (fast, no LLM).
+        Insert case data from regex/minimal extraction.
+        
+        Metadata fields (from CSV) are ALWAYS used directly:
+        - case_number, case_title, year, month, file_date
+        - file_contains, case_info_url, pdf_url
+        
+        Regex-extracted fields (only when extraction_mode='regex'):
+        - court_level, division, outcome, judges, citations, statutes, county
         
         Args:
-            regex_result: RegexExtractionResult from regex_extractor
-            metadata: Original metadata from CSV
+            regex_result: RegexExtractionResult (may have empty lists if minimal mode)
+            metadata: Original metadata from CSV - ALWAYS used for case info
             source_file_info: Source file information
             
         Returns:
@@ -441,19 +448,23 @@ class DatabaseInserter:
         """
         from .regex_extractor import RegexExtractionResult
         
+        # Ensure metadata exists
+        if not metadata:
+            metadata = {}
+        
         try:
             with self.db.connect() as conn:
                 trans = conn.begin()
                 
                 try:
                     # 1. Resolve dimension table IDs from metadata
-                    dimension_ids = {}
-                    if metadata:
-                        dimension_ids = self.dimension_service.resolve_metadata_to_ids(metadata)
-                        logger.info(f"🔍 Resolved dimension IDs: {dimension_ids}")
+                    dimension_ids = self.dimension_service.resolve_metadata_to_ids(metadata)
+                    logger.info(f"🔍 Resolved dimension IDs: {dimension_ids}")
                     
-                    # 2. Insert case record
-                    case_id = self._insert_case_from_regex(conn, regex_result, dimension_ids, source_file_info)
+                    # 2. Insert case record - metadata used directly, regex_result for extracted fields only
+                    case_id = self._insert_case_from_regex(
+                        conn, regex_result, metadata, dimension_ids, source_file_info
+                    )
                     logger.info(f"📁 Inserted case with ID: {case_id}")
                     
                     # 3. Insert parties
@@ -491,10 +502,35 @@ class DatabaseInserter:
             logger.error(f"❌ Database connection error: {e}")
             return None
     
-    def _insert_case_from_regex(self, conn, regex_result, dimension_ids: Dict[str, Optional[int]],
+    def _insert_case_from_regex(self, conn, regex_result, metadata: Dict[str, Any],
+                                dimension_ids: Dict[str, Optional[int]],
                                 source_file_info: Dict[str, str] = None) -> int:
-        """Insert case from regex extraction result"""
+        """
+        Insert case record.
         
+        Uses metadata DIRECTLY for:
+        - case_number, case_title, file_date, pdf_url, case_info_url, file_contains
+        
+        Uses regex_result for EXTRACTED fields only:
+        - court_level, division, outcome, county
+        """
+        
+        # === METADATA FIELDS (always from CSV) ===
+        case_number = str(metadata.get('case_number', ''))
+        case_title = metadata.get('case_title', metadata.get('title', ''))
+        pdf_url = metadata.get('pdf_url', '')
+        case_info_url = metadata.get('case_info_url', '')
+        
+        # Parse file_date from metadata
+        file_date = None
+        if metadata.get('file_date'):
+            file_date = self._parse_date(metadata['file_date'])
+        
+        # Determine publication status from metadata's file_contains
+        file_contains = str(metadata.get('file_contains', '')).lower()
+        is_published = 'unpublished' not in file_contains
+        
+        # === REGEX-EXTRACTED FIELDS (from PDF analysis) ===
         # Map court_level string to enum value
         court_level_map = {
             'supreme_court': 'supreme_court',
@@ -522,6 +558,9 @@ class DatabaseInserter:
         }
         outcome = outcome_map.get(regex_result.appeal_outcome)
         
+        # County from regex (not in metadata)
+        county = regex_result.county if regex_result else None
+        
         query = text("""
             INSERT INTO cases (
                 case_file_id, title, court_level, district, county,
@@ -545,17 +584,17 @@ class DatabaseInserter:
         dimension_ids = dimension_ids or {}
         
         result = conn.execute(query, {
-            'case_file_id': regex_result.case_number,
-            'title': regex_result.case_name,
-            'court_level': court_level,
-            'district': division,
-            'county': regex_result.county,
-            'docket_number': regex_result.case_number,
-            'appeal_published_date': regex_result.decision_date,
-            'published': regex_result.publication_status == 'published',
-            'source_url': regex_result.pdf_url,
-            'overall_case_outcome': outcome,
-            'appeal_outcome': outcome,
+            'case_file_id': case_number,           # FROM METADATA
+            'title': case_title,                    # FROM METADATA  
+            'court_level': court_level,             # FROM REGEX
+            'district': division,                   # FROM REGEX
+            'county': county,                       # FROM REGEX
+            'docket_number': case_number,           # FROM METADATA
+            'appeal_published_date': file_date,     # FROM METADATA
+            'published': is_published,              # FROM METADATA (file_contains)
+            'source_url': pdf_url,                  # FROM METADATA
+            'overall_case_outcome': outcome,        # FROM REGEX
+            'appeal_outcome': outcome,              # FROM REGEX
             'case_type_id': dimension_ids.get('case_type_id'),
             'stage_type_id': dimension_ids.get('stage_type_id'),
             'court_id': dimension_ids.get('court_id'),

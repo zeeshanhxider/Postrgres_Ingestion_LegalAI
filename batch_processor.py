@@ -411,8 +411,8 @@ def main():
     csv_parser.add_argument('--downloads-dir', default='downloads', help='Base directory for downloaded PDFs (default: downloads)')
     csv_parser.add_argument('--limit', type=int, help='Limit number of cases to process')
     csv_parser.add_argument('--no-skip-existing', action='store_true', help='Process even if case exists in database')
-    csv_parser.add_argument('--extraction-mode', choices=['regex', 'ai', 'none'], default='regex',
-                           help='Extraction mode: regex (fast, free), ai (LLM-based, slow), none (metadata only). Default: regex')
+    csv_parser.add_argument('--extraction-mode', choices=['regex', 'ai'], default='regex',
+                           help='Extraction mode: regex (fast, free) or ai (LLM-based, slow). Default: regex')
     
     # Global options
     parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose logging')

@@ -130,16 +130,7 @@ class LegalCaseIngestor:
                         regex_result, metadata, source_file_info
                     )
             else:
-                # MINIMAL: No extraction, just metadata
-                logger.info("📋 Using metadata only (no extraction)")
-                regex_result = extract_case_data_regex(full_text, metadata)
-                # Clear extracted entities, keep only metadata
-                regex_result.judges = []
-                regex_result.citations = []
-                regex_result.statutes = []
-                case_id = self.database_inserter.insert_regex_extraction(
-                    regex_result, metadata, source_file_info
-                )
+                raise ValueError(f"Invalid extraction_mode: {extraction_mode}. Use 'regex' or 'ai'.")
             
             if not case_id:
                 raise ValueError("Failed to insert case record")
