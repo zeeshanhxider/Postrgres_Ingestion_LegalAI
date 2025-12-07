@@ -75,12 +75,12 @@ class BatchProcessor:
                 'file_path': str(pdf_path.absolute())
             }
             
-            # Process with case ingestor (using regex by default)
+            # Process with case ingestor (using hybrid by default)
             result = self.ingestor.ingest_pdf_case(
                 pdf_content=pdf_content,
                 metadata=metadata,
                 source_file_info=source_file_info,
-                extraction_mode='regex'  # Fast regex extraction
+                extraction_mode='hybrid'  # Recommended: combines metadata + regex + AI
             )
             
             # Log results
@@ -421,8 +421,8 @@ def main():
     csv_parser.add_argument('--downloads-dir', default='downloads', help='Base directory for downloaded PDFs (default: downloads)')
     csv_parser.add_argument('--limit', type=int, help='Limit number of cases to process')
     csv_parser.add_argument('--no-skip-existing', action='store_true', help='Process even if case exists in database')
-    csv_parser.add_argument('--extraction-mode', choices=['regex', 'ai'], default='regex',
-                           help='Extraction mode: regex (fast, free) or ai (LLM-based, slow). Default: regex')
+    csv_parser.add_argument('--extraction-mode', choices=['hybrid', 'regex', 'ai'], default='hybrid',
+                           help='Extraction mode: hybrid (recommended, uses all methods), regex (fast), or ai (LLM only). Default: hybrid')
     
     # Global options
     parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose logging')

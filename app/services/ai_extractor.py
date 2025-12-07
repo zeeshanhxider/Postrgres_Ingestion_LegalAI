@@ -45,6 +45,12 @@ def extract_case_with_ollama(case_text: str, case_info: Dict[str, Any]) -> Optio
     # Try native ollama with structured output and enhanced validation
     try:
         import ollama
+        from ollama import Client
+        
+        # Get configured base URL (supports remote Ollama servers)
+        ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        client = Client(host=ollama_base_url)
+        
         prompt = _build_prompt()
         msgs = prompt.format_messages(case_info=case_info, case_text=case_text)
         
@@ -56,7 +62,9 @@ def extract_case_with_ollama(case_text: str, case_info: Dict[str, Any]) -> Optio
         schema_json = json.dumps(LegalCaseExtraction.model_json_schema(), indent=2)
         system_with_schema = f"{enhanced_system}\n\nIMPORTANT: You must return valid JSON that matches this exact schema:\n{schema_json}"
         
-        response = ollama.chat(
+        logger.info(f"[AI] Connecting to Ollama at {ollama_base_url}...")
+        
+        response = client.chat(
             model=os.getenv("OLLAMA_MODEL", "llama3.3:latest"),
             messages=[
                 {"role": "system", "content": system_with_schema},
@@ -83,7 +91,14 @@ def extract_case_with_ollama(case_text: str, case_info: Dict[str, Any]) -> Optio
     # Fallback to LangChain ChatOllama
     try:
         from langchain_ollama import ChatOllama
-        llm = ChatOllama(model=os.getenv("OLLAMA_MODEL", "llama3.3:latest"), temperature=0.0, format="json")
+        ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        logger.info(f"[AI] LangChain fallback - connecting to {ollama_base_url}...")
+        llm = ChatOllama(
+            model=os.getenv("OLLAMA_MODEL", "llama3.3:latest"), 
+            base_url=ollama_base_url,
+            temperature=0.0, 
+            format="json"
+        )
         try:
             structured_llm = llm.with_structured_output(LegalCaseExtraction, method="json_schema")
         except Exception:

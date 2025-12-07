@@ -15,6 +15,7 @@ from sqlalchemy.engine import Engine
 # Import our extraction and database services
 from .ai_extractor import extract_case_data
 from .regex_extractor import extract_case_data_regex
+from .hybrid_extractor import extract_hybrid, HybridExtractionResult
 from .database_inserter import DatabaseInserter
 
 # Import word and phrase processing
@@ -55,17 +56,21 @@ class LegalCaseIngestor:
         metadata: Dict[str, Any],
         source_file_info: Optional[Dict[str, str]] = None,
         enable_ai_extraction: bool = False,  # Default to regex (fast)
-        extraction_mode: str = 'regex'  # 'regex', 'ai', or 'none'
+        extraction_mode: str = 'hybrid'  # 'hybrid' (recommended), 'regex', 'ai', or 'none'
     ) -> Dict[str, Any]:
         """
-        Main ingestion method - processes PDF with complete hybrid approach
+        Main ingestion method - processes PDF with extraction and RAG indexing.
         
         Args:
             pdf_content: PDF file content as bytes
-            metadata: Case metadata
+            metadata: Case metadata from CSV
             source_file_info: Source file information (filename, path)
             enable_ai_extraction: DEPRECATED - use extraction_mode instead
-            extraction_mode: 'regex' (fast), 'ai' (slow), or 'none' (metadata only)
+            extraction_mode: 
+                - 'hybrid' (recommended): Combines metadata + regex + AI for ALL columns
+                - 'regex' (fast): Regex only, some columns empty
+                - 'ai' (slow): AI only, uses older insertion method
+                - 'none': Metadata only (not recommended)
             
         Returns:
             Dictionary with ingestion results
@@ -90,9 +95,27 @@ class LegalCaseIngestor:
             logger.info(f"[OK] Parsed PDF: {len(pages)} pages, {len(full_text)} characters")
             
             # Step 2: Extract case data based on mode
-            if extraction_mode == 'regex':
-                # FAST: Use regex extraction
-                logger.info("[INFO] Running regex extraction...")
+            if extraction_mode == 'hybrid':
+                # RECOMMENDED: Combines metadata + regex + AI for comprehensive extraction
+                logger.info("[HYBRID] Running hybrid extraction (metadata + regex + AI)...")
+                hybrid_result = extract_hybrid(full_text, metadata, enable_ai=True)
+                
+                logger.info(f"[HYBRID] Extraction complete: "
+                           f"regex={hybrid_result.regex_extraction_successful}, "
+                           f"ai={hybrid_result.ai_extraction_successful}")
+                logger.info(f"[HYBRID] Entities: {len(hybrid_result.judges)} judges, "
+                           f"{len(hybrid_result.attorneys)} attorneys, "
+                           f"{len(hybrid_result.citations)} citations, "
+                           f"{len(hybrid_result.issues_decisions)} issues")
+                
+                # Insert using hybrid result
+                case_id = self.database_inserter.insert_hybrid_extraction(
+                    hybrid_result, metadata, source_file_info
+                )
+                
+            elif extraction_mode == 'regex':
+                # FAST: Use regex extraction only (some columns will be empty)
+                logger.info("[REGEX] Running regex extraction...")
                 regex_result = extract_case_data_regex(full_text, metadata)
                 
                 logger.info(f"[OK] Regex extraction: {len(regex_result.judges)} judges, "
@@ -105,7 +128,7 @@ class LegalCaseIngestor:
                 )
                 
             elif extraction_mode == 'ai':
-                # SLOW: Use AI extraction (original method)
+                # SLOW: Use AI extraction only (original method)
                 logger.info("[AI] Running AI extraction...")
                 case_info = {
                     'case_number': metadata.get('case_number', 'Unknown'),
@@ -124,13 +147,13 @@ class LegalCaseIngestor:
                         extracted_data, metadata, source_file_info
                     )
                 else:
-                    logger.warning("[WARN] AI extraction failed, falling back to regex")
-                    regex_result = extract_case_data_regex(full_text, metadata)
-                    case_id = self.database_inserter.insert_regex_extraction(
-                        regex_result, metadata, source_file_info
+                    logger.warning("[WARN] AI extraction failed, falling back to hybrid")
+                    hybrid_result = extract_hybrid(full_text, metadata, enable_ai=False)
+                    case_id = self.database_inserter.insert_hybrid_extraction(
+                        hybrid_result, metadata, source_file_info
                     )
             else:
-                raise ValueError(f"Invalid extraction_mode: {extraction_mode}. Use 'regex' or 'ai'.")
+                raise ValueError(f"Invalid extraction_mode: {extraction_mode}. Use 'hybrid', 'regex', or 'ai'.")
             
             if not case_id:
                 raise ValueError("Failed to insert case record")

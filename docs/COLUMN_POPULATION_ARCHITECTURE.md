@@ -6,6 +6,55 @@ This document maps how each column in the `cases` table is populated, showing wh
 
 ---
 
+## 🚀 HYBRID EXTRACTION MODE (Recommended)
+
+**NEW:** The system now supports a `hybrid` extraction mode that combines all three methods for comprehensive data population:
+
+```python
+# Usage in batch_processor.py
+result = ingestor.ingest_pdf_case(
+    pdf_content=pdf_content,
+    metadata=metadata,
+    source_file_info=source_file_info,
+    extraction_mode='hybrid'  # Recommended: combines metadata + regex + AI
+)
+```
+
+### How Hybrid Mode Works
+
+1. **Phase 1 - Metadata**: Always runs first, extracts CSV-provided fields (guaranteed accuracy)
+2. **Phase 2 - Regex**: Fast pattern matching for structural data (judges, citations, statutes, outcomes)
+3. **Phase 3 - AI**: LLM extraction for complex understanding (summary, issues, arguments, attorneys)
+4. **Phase 4 - Merge**: Combines results, preferring higher-quality sources and deduplicating
+
+### Hybrid Mode Benefits
+
+| Aspect                | Hybrid          | Regex-Only    | AI-Only         |
+| --------------------- | --------------- | ------------- | --------------- |
+| **Columns Populated** | ALL             | ~50%          | ~80%            |
+| **Speed**             | Medium (60-90s) | Fast (20-30s) | Slow (60-120s)  |
+| **Cost**              | $0.01-0.05/case | $0            | $0.01-0.05/case |
+| **Attorneys**         | ✅              | ❌            | ✅              |
+| **Issues/Decisions**  | ✅              | ❌            | ✅              |
+| **Arguments**         | ✅              | ❌            | ✅              |
+| **Citations**         | ✅ (regex)      | ✅            | ✅              |
+| **Summary**           | ✅ (AI)         | ❌            | ✅              |
+
+### Command Line Usage
+
+```bash
+# Use hybrid mode (recommended, now default)
+python batch_processor.py csv metadata.csv --extraction-mode hybrid
+
+# Use regex-only mode (fast, but incomplete)
+python batch_processor.py csv metadata.csv --extraction-mode regex
+
+# Use AI-only mode (legacy, slower)
+python batch_processor.py csv metadata.csv --extraction-mode ai
+```
+
+---
+
 ## CASES Table Column Population
 
 ### 🔵 METADATA-ONLY Fields (From CSV)

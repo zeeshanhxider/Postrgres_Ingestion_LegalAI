@@ -808,6 +808,208 @@ class DatabaseInserter:
             'created_at': datetime.now()
         })
 
+    def insert_hybrid_extraction(self, hybrid_result, metadata: Dict[str, Any] = None,
+                                   source_file_info: Dict[str, str] = None) -> Optional[int]:
+        """
+        Insert case data from hybrid extraction (metadata + regex + AI).
+        
+        This method populates ALL columns using the best available data:
+        - Metadata fields: case identifiers, URLs, dates, publication status
+        - Regex fields: county, outcomes, judges, citations, statutes
+        - AI fields: summary, attorneys, issues/decisions, arguments, trial info, winners
+        
+        Args:
+            hybrid_result: HybridExtractionResult from hybrid_extractor
+            metadata: Original metadata from CSV (used for dimension resolution)
+            source_file_info: Source file information
+            
+        Returns:
+            case_id if successful, None if failed
+        """
+        from .hybrid_extractor import HybridExtractionResult
+        
+        if not metadata:
+            metadata = {}
+        
+        try:
+            with self.db.connect() as conn:
+                trans = conn.begin()
+                
+                try:
+                    # 1. Resolve dimension table IDs
+                    dimension_ids = self.dimension_service.resolve_metadata_to_ids(metadata)
+                    logger.info(f"[HYBRID] Resolved dimension IDs: {dimension_ids}")
+                    
+                    # 2. Insert case record with ALL fields from hybrid result
+                    case_id = self._insert_case_from_hybrid(
+                        conn, hybrid_result, metadata, dimension_ids, source_file_info
+                    )
+                    logger.info(f"[HYBRID] Inserted case with ID: {case_id}")
+                    
+                    # 3. Insert parties (prefer AI parties with personal roles, fallback to regex)
+                    if hybrid_result.parties_with_personal_roles:
+                        for party in hybrid_result.parties_with_personal_roles:
+                            self._insert_party(conn, party, case_id)
+                            logger.info(f"[PARTY] Inserted party (AI): {party.name}")
+                    else:
+                        for party in hybrid_result.parties:
+                            self._insert_party_from_regex(conn, party, case_id)
+                            logger.info(f"[PARTY] Inserted party (regex): {party.name}")
+                    
+                    # 4. Insert attorneys (AI only)
+                    for attorney in hybrid_result.attorneys:
+                        self._insert_attorney(conn, attorney, case_id)
+                        logger.info(f"[ATTY] Inserted attorney: {attorney.name}")
+                    
+                    # 5. Insert judges (merged from regex + AI)
+                    for judge in hybrid_result.judges:
+                        self._insert_judge_from_regex(conn, judge, case_id)
+                        logger.info(f"[JUDGE] Inserted judge: {judge.name} ({judge.role})")
+                    
+                    # 6. Insert issues/decisions (AI only)
+                    issue_id_mapping = {}
+                    for i, issue in enumerate(hybrid_result.issues_decisions):
+                        issue_id = self._insert_issue(conn, issue, case_id)
+                        issue_id_mapping[i] = issue_id
+                        logger.info(f"[ISSUE] Inserted issue: {issue.issue_summary[:50]}...")
+                    
+                    # 7. Insert arguments (AI only)
+                    for argument in hybrid_result.arguments:
+                        related_issue_id = list(issue_id_mapping.values())[0] if issue_id_mapping else None
+                        if related_issue_id:
+                            self._insert_argument(conn, argument, case_id, related_issue_id)
+                            logger.info(f"[ARG] Inserted argument: {argument.side.value}")
+                    
+                    # 8. Insert statute citations (regex)
+                    for statute in hybrid_result.statutes:
+                        self._insert_statute_citation(conn, statute, case_id)
+                    logger.info(f"[STAT] Inserted {len(hybrid_result.statutes)} statute citations")
+                    
+                    # 9. Insert case citations (regex)
+                    for citation in hybrid_result.citations:
+                        self._insert_case_citation(conn, citation, case_id)
+                    logger.info(f"[CITE] Inserted {len(hybrid_result.citations)} case citations")
+                    
+                    # 10. Insert precedents with relationship context (AI enriched)
+                    for precedent in hybrid_result.precedents:
+                        self._insert_citation(conn, precedent, case_id)
+                        logger.info(f"[PREC] Inserted precedent: {precedent.citation}")
+                    
+                    trans.commit()
+                    logger.info(f"[HYBRID] Successfully inserted case {case_id} via hybrid extraction")
+                    return case_id
+                    
+                except Exception as e:
+                    trans.rollback()
+                    logger.error(f"[HYBRID] Failed to insert case: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    return None
+                    
+        except Exception as e:
+            logger.error(f"[HYBRID] Database connection error: {e}")
+            return None
+    
+    def _insert_case_from_hybrid(self, conn, hybrid_result, metadata: Dict[str, Any],
+                                  dimension_ids: Dict[str, Optional[int]],
+                                  source_file_info: Dict[str, str] = None) -> int:
+        """
+        Insert case record with ALL fields from hybrid extraction.
+        
+        This populates ALL columns in the cases table using:
+        - Metadata: case_file_id, title, source_url, dates, publication
+        - Regex: county, outcomes
+        - AI: court, trial info, dates, summary, winners, case_type
+        """
+        
+        query = text("""
+            INSERT INTO cases (
+                case_file_id, title, court_level, court, district, county,
+                docket_number, source_docket_number, trial_judge,
+                trial_start_date, trial_end_date, trial_published_date,
+                appeal_start_date, appeal_end_date, appeal_published_date,
+                oral_argument_date, published,
+                summary, source_url, case_info_url, overall_case_outcome, appeal_outcome,
+                opinion_type, publication_status, decision_year, decision_month,
+                case_type_id, stage_type_id, court_id,
+                case_type, source_file, source_file_path, extraction_timestamp,
+                winner_legal_role, winner_personal_role,
+                created_at, updated_at
+            ) VALUES (
+                :case_file_id, :title, :court_level, :court, :district, :county,
+                :docket_number, :source_docket_number, :trial_judge,
+                :trial_start_date, :trial_end_date, :trial_published_date,
+                :appeal_start_date, :appeal_end_date, :appeal_published_date,
+                :oral_argument_date, :published,
+                :summary, :source_url, :case_info_url, :overall_case_outcome, :appeal_outcome,
+                :opinion_type, :publication_status, :decision_year, :decision_month,
+                :case_type_id, :stage_type_id, :court_id,
+                :case_type, :source_file, :source_file_path, :extraction_timestamp,
+                :winner_legal_role, :winner_personal_role,
+                :created_at, :updated_at
+            )
+            RETURNING case_id
+        """)
+        
+        now = datetime.now()
+        dimension_ids = dimension_ids or {}
+        
+        result = conn.execute(query, {
+            # === METADATA FIELDS ===
+            'case_file_id': hybrid_result.case_file_id,
+            'title': hybrid_result.title,
+            'source_url': hybrid_result.source_url,
+            'case_info_url': hybrid_result.case_info_url,
+            'appeal_published_date': hybrid_result.appeal_published_date,
+            'published': hybrid_result.published,
+            'opinion_type': hybrid_result.opinion_type,
+            'publication_status': hybrid_result.publication_status,
+            'decision_year': hybrid_result.decision_year,
+            'decision_month': hybrid_result.decision_month,
+            
+            # === METADATA + REGEX HYBRID FIELDS ===
+            'court_level': hybrid_result.court_level,
+            'district': hybrid_result.district,
+            'docket_number': hybrid_result.docket_number,
+            
+            # === REGEX FIELDS ===
+            'county': hybrid_result.county,
+            'overall_case_outcome': hybrid_result.overall_case_outcome,
+            'appeal_outcome': hybrid_result.appeal_outcome,
+            
+            # === AI FIELDS ===
+            'court': hybrid_result.court,
+            'source_docket_number': hybrid_result.source_docket_number,
+            'trial_judge': hybrid_result.trial_judge,
+            'trial_start_date': hybrid_result.trial_start_date,
+            'trial_end_date': hybrid_result.trial_end_date,
+            'trial_published_date': hybrid_result.trial_published_date,
+            'appeal_start_date': hybrid_result.appeal_start_date,
+            'appeal_end_date': hybrid_result.appeal_end_date,
+            'oral_argument_date': hybrid_result.oral_argument_date,
+            'summary': hybrid_result.summary,
+            'case_type': hybrid_result.case_type or 'divorce',
+            'winner_legal_role': hybrid_result.winner_legal_role,
+            'winner_personal_role': hybrid_result.winner_personal_role,
+            
+            # === DIMENSION IDs ===
+            'case_type_id': dimension_ids.get('case_type_id'),
+            'stage_type_id': dimension_ids.get('stage_type_id'),
+            'court_id': dimension_ids.get('court_id'),
+            
+            # === SOURCE FILE INFO ===
+            'source_file': source_file_info.get('filename') if source_file_info else None,
+            'source_file_path': source_file_info.get('file_path') if source_file_info else None,
+            
+            # === TIMESTAMPS ===
+            'extraction_timestamp': now,
+            'created_at': now,
+            'updated_at': now
+        })
+        
+        case_id = result.fetchone().case_id
+        return case_id
+
     def get_case_stats(self, case_id: int) -> dict:
         """Get statistics for inserted case data"""
         with self.db.connect() as conn:
