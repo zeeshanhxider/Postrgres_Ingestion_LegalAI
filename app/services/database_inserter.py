@@ -1,4 +1,4 @@
-"""
+﻿"""
 Database Insertion Service
 Clean and reliable database insertion for all legal case entities.
 Enhanced for new schema with document management and dimension tables.
@@ -44,37 +44,37 @@ class DatabaseInserter:
                     dimension_ids = {}
                     if metadata:
                         dimension_ids = self.dimension_service.resolve_metadata_to_ids(metadata)
-                        logger.info(f"🔍 Resolved dimension IDs: {dimension_ids}")
+                        logger.info(f"[INFO] Resolved dimension IDs: {dimension_ids}")
                     
                     # 2. Insert case with dimension references - DB auto-assigns case_id
                     case_id = self._insert_case(conn, extracted_data.case, dimension_ids, source_file_info)
-                    logger.info(f"📁 Inserted case with ID: {case_id}")
+                    logger.info(f"[CASE] Inserted case with ID: {case_id}")
                     
                     # 2. Insert parties - DB auto-assigns party_id for each
                     party_ids = []
                     for party in extracted_data.parties:
                         party_id = self._insert_party(conn, party, case_id)
                         party_ids.append(party_id)
-                        logger.info(f"👥 Inserted party: {party.name} (ID: {party_id})")
+                        logger.info(f"[PARTY] Inserted party: {party.name} (ID: {party_id})")
                     
                     # 3. Insert attorneys - DB auto-assigns attorney_id for each
                     attorney_ids = []
                     for attorney in extracted_data.attorneys:
                         attorney_id = self._insert_attorney(conn, attorney, case_id)
                         attorney_ids.append(attorney_id)
-                        logger.info(f"⚖️ Inserted attorney: {attorney.name} (ID: {attorney_id})")
+                        logger.info(f"[ATTY] Inserted attorney: {attorney.name} (ID: {attorney_id})")
                     
                     # 4. Insert judges - DB auto-assigns judge_id for each
                     for judge in extracted_data.appeals_judges:
                         self._insert_judge(conn, judge, case_id)
-                        logger.info(f"👨‍⚖️ Inserted judge: {judge.judge_name}")
+                        logger.info(f"[JUDGE] Inserted judge: {judge.judge_name}")
                     
                     # 5. Insert issues - DB auto-assigns issue_id for each
                     issue_id_mapping = {}
                     for i, issue in enumerate(extracted_data.issues_decisions):
                         issue_id = self._insert_issue(conn, issue, case_id)
                         issue_id_mapping[i] = issue_id  # Map by position in array
-                        logger.info(f"📋 Inserted issue: {issue.issue_summary[:50]}... (ID: {issue_id})")
+                        logger.info(f"[ISSUE] Inserted issue: {issue.issue_summary[:50]}... (ID: {issue_id})")
                     
                     # 6. Insert arguments - link to issues by matching content/position
                     for argument in extracted_data.arguments:
@@ -84,26 +84,26 @@ class DatabaseInserter:
                         related_issue_id = list(issue_id_mapping.values())[0] if issue_id_mapping else None
                         if related_issue_id:
                             argument_id = self._insert_argument(conn, argument, case_id, related_issue_id)
-                            logger.info(f"💬 Inserted argument: {argument.side} (ID: {argument_id})")
+                            logger.info(f"[ARG] Inserted argument: {argument.side} (ID: {argument_id})")
                     
                     # 7. Insert precedents (citations)
                     for precedent in extracted_data.precedents:
                         citation_id = self._insert_citation(conn, precedent, case_id)
-                        logger.info(f"📖 Inserted citation: {precedent.citation} (ID: {citation_id})")
+                        logger.info(f"[CITE] Inserted citation: {precedent.citation} (ID: {citation_id})")
                     
                     # Commit transaction
                     trans.commit()
                     
-                    logger.info(f"✅ Successfully inserted complete case with ID: {case_id}")
+                    logger.info(f"[OK] Successfully inserted complete case with ID: {case_id}")
                     return case_id
                     
                 except Exception as e:
                     trans.rollback()
-                    logger.error(f"❌ Failed to insert case: {e}")
+                    logger.error(f"[FAIL] Failed to insert case: {e}")
                     return None
                     
         except Exception as e:
-            logger.error(f"❌ Database connection error: {e}")
+            logger.error(f"[FAIL] Database connection error: {e}")
             return None
     
     def _insert_case(self, conn, case_data, dimension_ids: Dict[str, Optional[int]] = None, 
@@ -228,7 +228,7 @@ class DatabaseInserter:
                 document_id = result.fetchone().document_id
                 conn.commit()
                 
-                logger.info(f"📄 Created document record with ID: {document_id}")
+                logger.info(f"[DOC] Created document record with ID: {document_id}")
                 return document_id
                 
         except Exception as e:
@@ -473,47 +473,47 @@ class DatabaseInserter:
                 try:
                     # 1. Resolve dimension table IDs from metadata
                     dimension_ids = self.dimension_service.resolve_metadata_to_ids(metadata)
-                    logger.info(f"🔍 Resolved dimension IDs: {dimension_ids}")
+                    logger.info(f"[INFO] Resolved dimension IDs: {dimension_ids}")
                     
                     # 2. Insert case record - metadata used directly, regex_result for extracted fields only
                     case_id = self._insert_case_from_regex(
                         conn, regex_result, metadata, dimension_ids, source_file_info
                     )
-                    logger.info(f"📁 Inserted case with ID: {case_id}")
+                    logger.info(f"[CASE] Inserted case with ID: {case_id}")
                     
                     # 3. Insert parties
                     for party in regex_result.parties:
                         self._insert_party_from_regex(conn, party, case_id)
-                        logger.info(f"👥 Inserted party: {party.name}")
+                        logger.info(f"[PARTY] Inserted party: {party.name}")
                     
                     # 4. Insert judges
                     for judge in regex_result.judges:
                         self._insert_judge_from_regex(conn, judge, case_id)
-                        logger.info(f"👨‍⚖️ Inserted judge: {judge.name} ({judge.role})")
+                        logger.info(f"[JUDGE] Inserted judge: {judge.name} ({judge.role})")
                     
                     # 5. Insert statute citations (RCW)
                     for statute in regex_result.statutes:
                         self._insert_statute_citation(conn, statute, case_id)
-                    logger.info(f"📜 Inserted {len(regex_result.statutes)} statute citations")
+                    logger.info(f"[STAT] Inserted {len(regex_result.statutes)} statute citations")
                     
                     # 6. Insert case citations
                     for citation in regex_result.citations:
                         self._insert_case_citation(conn, citation, case_id)
-                    logger.info(f"📖 Inserted {len(regex_result.citations)} case citations")
+                    logger.info(f"[CITE] Inserted {len(regex_result.citations)} case citations")
                     
                     trans.commit()
-                    logger.info(f"✅ Successfully inserted case {case_id} via regex extraction")
+                    logger.info(f"[OK] Successfully inserted case {case_id} via regex extraction")
                     return case_id
                     
                 except Exception as e:
                     trans.rollback()
-                    logger.error(f"❌ Failed to insert regex case: {e}")
+                    logger.error(f"[FAIL] Failed to insert regex case: {e}")
                     import traceback
                     traceback.print_exc()
                     return None
                     
         except Exception as e:
-            logger.error(f"❌ Database connection error: {e}")
+            logger.error(f"[FAIL] Database connection error: {e}")
             return None
     
     def _insert_case_from_regex(self, conn, regex_result, metadata: Dict[str, Any],
@@ -573,15 +573,42 @@ class DatabaseInserter:
             }
             court_level = court_level_map.get(regex_result.court_level, 'unknown')
         
-        # === REGEX-EXTRACTED FIELDS (from PDF analysis) ===
-        # Map division
-        division_map = {
-            'division_one': 'division_one',
-            'division_two': 'division_two', 
-            'division_three': 'division_three',
-            None: None
-        }
-        division = division_map.get(regex_result.division)
+        # === DIVISION: Use metadata first, then regex fallback ===
+        # Format: "Division I", "Division II", "Division III"
+        metadata_division = str(metadata.get('division', '')).strip()
+        division_suffix = None  # For docket_number composite (I, II, III)
+        
+        if metadata_division in ('I', '1'):
+            division = 'Division I'
+            division_suffix = 'I'
+        elif metadata_division in ('II', '2'):
+            division = 'Division II'
+            division_suffix = 'II'
+        elif metadata_division in ('III', '3'):
+            division = 'Division III'
+            division_suffix = 'III'
+        elif metadata_division:
+            # Unknown division value, format as "Division X"
+            division = f'Division {metadata_division}'
+            division_suffix = metadata_division
+        else:
+            # Fallback to regex extraction
+            regex_division_map = {
+                'division_one': ('Division I', 'I'),
+                'division_two': ('Division II', 'II'), 
+                'division_three': ('Division III', 'III'),
+            }
+            if regex_result and regex_result.division in regex_division_map:
+                division, division_suffix = regex_division_map[regex_result.division]
+            else:
+                division = None
+                division_suffix = None
+        
+        # Build composite docket_number: case_number-division (e.g., "37230-8-III")
+        if division_suffix:
+            docket_number = f"{case_number}-{division_suffix}"
+        else:
+            docket_number = case_number
         
         # Map outcome
         outcome_map = {
@@ -621,12 +648,12 @@ class DatabaseInserter:
         dimension_ids = dimension_ids or {}
         
         result = conn.execute(query, {
-            'case_file_id': case_number,           # FROM METADATA
+            'case_file_id': case_number,           # FROM METADATA (raw case number)
             'title': case_title,                    # FROM METADATA  
             'court_level': court_level,             # FROM METADATA (opinion_type) or REGEX fallback
-            'district': division,                   # FROM REGEX
+            'district': division,                   # FROM METADATA ("Division I", "Division II", etc.)
             'county': county,                       # FROM REGEX
-            'docket_number': case_number,           # FROM METADATA
+            'docket_number': docket_number,         # COMPOSITE: case_number-division (e.g., "37230-8-III")
             'appeal_published_date': file_date,     # FROM METADATA
             'published': is_published,              # FROM METADATA (file_contains)
             'source_url': pdf_url,                  # FROM METADATA

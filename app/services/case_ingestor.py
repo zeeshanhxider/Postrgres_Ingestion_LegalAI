@@ -1,4 +1,4 @@
-"""
+﻿"""
 Legal Case Ingestor
 Complete legal case processing with AI/Regex extraction, chunking, word/phrase indexing, and database storage.
 Designed for comprehensive RAG capabilities and reliable data extraction.
@@ -77,25 +77,25 @@ class LegalCaseIngestor:
         case_id = None
 
         try:
-            logger.info(f"🚀 Starting case ingestion (mode: {extraction_mode})")
+            logger.info(f"[START] Starting case ingestion (mode: {extraction_mode})")
             
             # Step 1: Parse PDF content
-            logger.info("📖 Parsing PDF content...")
+            logger.info("[PARSE] Parsing PDF content...")
             pages = extract_text_from_pdf(pdf_content)
             full_text = '\n\n'.join(pages)
             
             if not full_text or len(full_text.strip()) < 100:
                 raise ValueError("PDF content too short or empty")
             
-            logger.info(f"✅ Parsed PDF: {len(pages)} pages, {len(full_text)} characters")
+            logger.info(f"[OK] Parsed PDF: {len(pages)} pages, {len(full_text)} characters")
             
             # Step 2: Extract case data based on mode
             if extraction_mode == 'regex':
                 # FAST: Use regex extraction
-                logger.info("🔍 Running regex extraction...")
+                logger.info("[INFO] Running regex extraction...")
                 regex_result = extract_case_data_regex(full_text, metadata)
                 
-                logger.info(f"✅ Regex extraction: {len(regex_result.judges)} judges, "
+                logger.info(f"[OK] Regex extraction: {len(regex_result.judges)} judges, "
                            f"{len(regex_result.citations)} citations, "
                            f"{len(regex_result.statutes)} statutes")
                 
@@ -106,7 +106,7 @@ class LegalCaseIngestor:
                 
             elif extraction_mode == 'ai':
                 # SLOW: Use AI extraction (original method)
-                logger.info("🤖 Running AI extraction...")
+                logger.info("[AI] Running AI extraction...")
                 case_info = {
                     'case_number': metadata.get('case_number', 'Unknown'),
                     'title': metadata.get('title', metadata.get('case_title', 'Unknown')),
@@ -119,12 +119,12 @@ class LegalCaseIngestor:
                 extracted_data = extract_case_data(full_text, case_info)
                 
                 if extracted_data:
-                    logger.info("✅ AI extraction successful")
+                    logger.info("[OK] AI extraction successful")
                     case_id = self.database_inserter.insert_complete_case(
                         extracted_data, metadata, source_file_info
                     )
                 else:
-                    logger.warning("⚠️ AI extraction failed, falling back to regex")
+                    logger.warning("[WARN] AI extraction failed, falling back to regex")
                     regex_result = extract_case_data_regex(full_text, metadata)
                     case_id = self.database_inserter.insert_regex_extraction(
                         regex_result, metadata, source_file_info
@@ -135,12 +135,12 @@ class LegalCaseIngestor:
             if not case_id:
                 raise ValueError("Failed to insert case record")
             
-            logger.info(f"✅ Case inserted with ID: {case_id}")
+            logger.info(f"[OK] Case inserted with ID: {case_id}")
             
             # Step 3: Create document record if we have a case
             document_id = None
             if case_id and source_file_info:
-                logger.info("📄 Creating document record...")
+                logger.info("[FILE] Creating document record...")
                 # Enhance source file info with page count
                 enhanced_source_info = source_file_info.copy()
                 enhanced_source_info['page_count'] = len(pages)
@@ -150,17 +150,17 @@ class LegalCaseIngestor:
                 document_id = self.database_inserter.create_document_record(case_id, enhanced_source_info, dimension_ids)
                 
                 if document_id:
-                    logger.info(f"✅ Created document record with ID: {document_id}")
+                    logger.info(f"[OK] Created document record with ID: {document_id}")
                 else:
-                    logger.warning("⚠️ Failed to create document record")
+                    logger.warning("[WARN] Failed to create document record")
             
             # Step 4: Create chunks for RAG
-            logger.info("📄 Creating text chunks...")
+            logger.info("[FILE] Creating text chunks...")
             chunks = self.text_chunker.chunk_pages(pages)
-            logger.info(f"✅ Created {len(chunks)} text chunks")
+            logger.info(f"[OK] Created {len(chunks)} text chunks")
             
             # Step 5: Prepare chunks (no individual chunk embeddings)
-            logger.info("📦 Preparing chunks for processing...")
+            logger.info("[PREP] Preparing chunks for processing...")
             enhanced_chunks = []
             for chunk in chunks:
                 enhanced_chunk = {
@@ -170,7 +170,7 @@ class LegalCaseIngestor:
                 }
                 enhanced_chunks.append(enhanced_chunk)
             
-            logger.info(f"✅ Prepared {len(enhanced_chunks)} chunks")
+            logger.info(f"[OK] Prepared {len(enhanced_chunks)} chunks")
             
             # Only process chunks if we have a valid case_id
             chunk_ids = []
@@ -181,27 +181,27 @@ class LegalCaseIngestor:
             
             if case_id:
                 # Step 6: Insert chunks with embeddings
-                logger.info("💾 Inserting chunks...")
+                logger.info("[SAVE] Inserting chunks...")
                 chunk_ids = self._insert_chunks(case_id, enhanced_chunks, full_text, document_id)
-                logger.info(f"✅ Inserted {len(chunk_ids)} chunks")
+                logger.info(f"[OK] Inserted {len(chunk_ids)} chunks")
                 
                 # Step 7: Process chunks into sentences
-                logger.info("✂️ Processing chunks into sentences...")
+                logger.info("[PROCESS] Processing chunks into sentences...")
                 sentence_stats = self._process_case_sentences(case_id, enhanced_chunks, chunk_ids, document_id)
-                logger.info(f"✅ Processed {sentence_stats['total_sentences']} sentences with {sentence_stats['total_words']} words")
+                logger.info(f"[OK] Processed {sentence_stats['total_sentences']} sentences with {sentence_stats['total_words']} words")
                 
                 # Step 8: Process words for precise search (sentence-level)
-                logger.info("📝 Processing words at sentence level...")
+                logger.info("[WORD] Processing words at sentence level...")
                 word_stats = self.word_processor.process_case_sentences_words(case_id, document_id)
-                logger.info(f"✅ Processed {word_stats['total_words']} words, {word_stats['unique_words']} unique from {word_stats['sentences_processed']} sentences")
+                logger.info(f"[OK] Processed {word_stats['total_words']} words, {word_stats['unique_words']} unique from {word_stats['sentences_processed']} sentences")
                 
                 # Step 9: Extract phrases for terminology search
-                logger.info("🔤 Extracting phrases...")
+                logger.info("[PHRASE] Extracting phrases...")
                 phrase_stats = self._extract_case_phrases(case_id, enhanced_chunks, document_id)
-                logger.info(f"✅ Extracted {phrase_stats['phrases_inserted']} legal phrases")
+                logger.info(f"[OK] Extracted {phrase_stats['phrases_inserted']} legal phrases")
                 
                 # Step 10: Generate embeddings for global search
-                logger.info("🌟 Generating embeddings for global search...")
+                logger.info("[EMBED] Generating embeddings for global search...")
                 
                 # Generate embeddings for each chunk and store in global embeddings table
                 self._create_global_embeddings(case_id, enhanced_chunks, chunk_ids, document_id)
@@ -214,7 +214,7 @@ class LegalCaseIngestor:
                 
                 # Update case with embedding and full text
                 self._update_case_embedding(case_id, case_embedding, full_text, source_file_info)
-                logger.info("✅ Created global embeddings and case-level embedding")
+                logger.info("[OK] Created global embeddings and case-level embedding")
                 
                 # Step 9: Update word document frequencies
                 self.word_processor.update_word_document_frequencies(case_id)
@@ -222,7 +222,7 @@ class LegalCaseIngestor:
                 # Get final statistics
                 case_stats = self.database_inserter.get_case_stats(case_id)
             else:
-                logger.warning("⚠️ Skipping chunk processing - no valid case_id")
+                logger.warning("[WARN] Skipping chunk processing - no valid case_id")
             
             result = {
                 'case_id': case_id,
@@ -237,11 +237,11 @@ class LegalCaseIngestor:
                 'embedding_dimension': len(case_embedding) if case_embedding else 0
             }
             
-            logger.info(f"🎉 Case ingestion completed successfully for case {case_id}")
+            logger.info(f"[DONE] Case ingestion completed successfully for case {case_id}")
             return result
             
         except Exception as e:
-            logger.error(f"❌ Case ingestion failed for case {case_id}: {str(e)}")
+            logger.error(f"[FAIL] Case ingestion failed for case {case_id}: {str(e)}")
             raise
     
     def _determine_section(self, text: str) -> str:
@@ -573,4 +573,5 @@ class LegalCaseIngestor:
                     logger.warning(f"Failed to generate embedding for chunk {chunk_id}")
             
             conn.commit()
-            logger.info(f"✅ Created {len(chunk_ids)} global embeddings")
+            logger.info(f"[OK] Created {len(chunk_ids)} global embeddings")
+

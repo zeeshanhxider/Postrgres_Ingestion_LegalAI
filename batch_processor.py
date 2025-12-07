@@ -54,7 +54,7 @@ class BatchProcessor:
             True if successful, False if failed
         """
         try:
-            logger.info(f"📄 Processing: {pdf_path.name}")
+            logger.info(f"[FILE] Processing: {pdf_path.name}")
             
             # Read PDF content
             with open(pdf_path, 'rb') as f:
@@ -84,7 +84,7 @@ class BatchProcessor:
             )
             
             # Log results
-            logger.info(f"✅ Successfully processed {pdf_path.name}")
+            logger.info(f"[OK] Successfully processed {pdf_path.name}")
             logger.info(f"   Case ID: {result['case_id']}")
             logger.info(f"   Extraction Mode: {result['extraction_mode']}")
             logger.info(f"   Chunks: {result['chunks_created']}")
@@ -95,7 +95,7 @@ class BatchProcessor:
             return True
             
         except Exception as e:
-            logger.error(f"❌ Failed to process {pdf_path.name}: {str(e)}")
+            logger.error(f"[FAIL] Failed to process {pdf_path.name}: {str(e)}")
             return False
     
     def process_directory(self, pdf_dir: Path, limit: Optional[int] = None) -> None:
@@ -116,18 +116,18 @@ class BatchProcessor:
         if limit:
             pdf_files = pdf_files[:limit]
         
-        logger.info(f"🚀 Starting legal case batch processing")
-        logger.info(f"📁 Source Directory: {pdf_dir}")
-        logger.info(f"📄 Files to process: {len(pdf_files)}")
-        logger.info(f"🔍 Extraction: Regex (fast, free)")
-        logger.info(f"🔍 RAG Features: Full (chunks + words + phrases + embeddings)")
+        logger.info(f"[>>] Starting legal case batch processing")
+        logger.info(f"[DIR] Source Directory: {pdf_dir}")
+        logger.info(f"[FILES] Files to process: {len(pdf_files)}")
+        logger.info(f"[MODE] Extraction: Regex (fast, free)")
+        logger.info(f"[RAG] RAG Features: Full (chunks + words + phrases + embeddings)")
         
         self.start_time = datetime.now()
         
         # Process files
         for i, pdf_path in enumerate(pdf_files, 1):
             logger.info(f"\n{'='*60}")
-            logger.info(f"📄 Processing PDF {i}/{len(pdf_files)}: {pdf_path.name}")
+            logger.info(f"[FILE] Processing PDF {i}/{len(pdf_files)}: {pdf_path.name}")
             logger.info(f"{'='*60}")
             
             success = self.process_pdf_file(pdf_path)
@@ -141,9 +141,9 @@ class BatchProcessor:
             elapsed = datetime.now() - self.start_time
             rate = i / elapsed.total_seconds() * 60 if elapsed.total_seconds() > 0 else 0
             
-            logger.info(f"📊 Progress: {i}/{len(pdf_files)} files processed")
-            logger.info(f"✅ Success: {self.processed_count}, ❌ Failed: {self.failed_count}")
-            logger.info(f"⏱️ Rate: {rate:.1f} files/minute")
+            logger.info(f"[STATS] Progress: {i}/{len(pdf_files)} files processed")
+            logger.info(f"[OK] Success: {self.processed_count}, [FAIL] Failed: {self.failed_count}")
+            logger.info(f"[TIME] Rate: {rate:.1f} files/minute")
         
         # Final summary
         self._print_final_summary(len(pdf_files))
@@ -153,15 +153,15 @@ class BatchProcessor:
         elapsed = datetime.now() - self.start_time
         
         logger.info(f"\n{'='*60}")
-        logger.info(f"🎉 LEGAL CASE BATCH PROCESSING COMPLETE")
+        logger.info(f"[DONE] LEGAL CASE BATCH PROCESSING COMPLETE")
         logger.info(f"{'='*60}")
-        logger.info(f"📊 Total Files: {total_files}")
-        logger.info(f"✅ Successfully Processed: {self.processed_count}")
-        logger.info(f"❌ Failed: {self.failed_count}")
-        logger.info(f"📈 Success Rate: {(self.processed_count/total_files*100):.1f}%")
-        logger.info(f"⏱️ Total Time: {elapsed}")
-        logger.info(f"⚡ Average Rate: {self.processed_count/elapsed.total_seconds()*60:.1f} files/minute")
-        logger.info(f"💾 Log File: batch_processing.log")
+        logger.info(f"[STATS] Total Files: {total_files}")
+        logger.info(f"[OK] Successfully Processed: {self.processed_count}")
+        logger.info(f"[FAIL] Failed: {self.failed_count}")
+        logger.info(f"[RATE] Success Rate: {(self.processed_count/total_files*100):.1f}%")
+        logger.info(f"[TIME] Total Time: {elapsed}")
+        logger.info(f"[RATE] Average Rate: {self.processed_count/elapsed.total_seconds()*60:.1f} files/minute")
+        logger.info(f"[LOG] Log File: batch_processing.log")
 
     def process_pdf_with_metadata(
         self, 
@@ -181,7 +181,7 @@ class BatchProcessor:
             True if successful, False if failed
         """
         try:
-            logger.info(f"📄 Processing: {pdf_path.name}")
+            logger.info(f"[FILE] Processing: {pdf_path.name}")
             logger.info(f"   Case: {row_metadata.get('case_number')} - {row_metadata.get('case_title')}")
             
             # Read PDF content
@@ -207,7 +207,7 @@ class BatchProcessor:
                 'case_number': row_metadata.get('case_number', pdf_path.stem),
                 'title': row_metadata.get('case_title', pdf_path.stem.replace('_', ' ').title()),
                 'court_level': row_metadata.get('opinion_type', 'Unknown'),  # From metadata
-                'division': 'N/A',  # Will be extracted from regex if available
+                'division': row_metadata.get('division', ''),  # I, II, III from metadata
                 'publication': publication,
                 'file_date': file_date,
                 'year': row_metadata.get('year'),
@@ -236,7 +236,7 @@ class BatchProcessor:
             )
             
             # Log results
-            logger.info(f"✅ Successfully processed {row_metadata.get('case_number')}")
+            logger.info(f"[OK] Successfully processed {row_metadata.get('case_number')}")
             logger.info(f"   Case ID: {result['case_id']}")
             logger.info(f"   Extraction Mode: {result['extraction_mode']}")
             logger.info(f"   Chunks: {result['chunks_created']}")
@@ -247,7 +247,7 @@ class BatchProcessor:
             return True
             
         except Exception as e:
-            logger.error(f"❌ Failed to process {pdf_path.name}: {str(e)}")
+            logger.error(f"[FAIL] Failed to process {pdf_path.name}: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             return False
@@ -255,11 +255,12 @@ class BatchProcessor:
     def _find_pdf_path(self, row: Dict[str, Any], downloads_dir: Path) -> Optional[Path]:
         """
         Find the PDF file path based on CSV row metadata.
-        PDFs are organized as: downloads/Supreme_Court_Opinions/{year}/{month}/{filename}
+        PDFs are organized as: {csv_parent_dir}/{year}/{month}/{filename}
+        where csv_parent_dir is the directory containing the metadata.csv
         
         Args:
             row: CSV row with metadata
-            downloads_dir: Base downloads directory (e.g., downloads/Supreme_Court_Opinions)
+            downloads_dir: Base downloads directory (passed from command line, usually just 'downloads')
             
         Returns:
             Path to PDF file or None if not found
@@ -272,13 +273,15 @@ class BatchProcessor:
             logger.warning(f"Missing path components: year={year}, month={month}, filename={filename}")
             return None
         
-        # Try exact path: downloads_dir/{year}/{month}/{filename}
-        pdf_path = downloads_dir / year / month / filename
+        # The actual PDFs are in the same directory as the CSV file, not in downloads_dir
+        # We need to use self.csv_base_path which is set from the CSV file location
+        # Try exact path: csv_base_path/{year}/{month}/{filename}
+        pdf_path = self.csv_base_path / year / month / filename
         if pdf_path.exists():
             return pdf_path
         
         # Try with different month formats (e.g., "January" vs "Jan")
-        year_dir = downloads_dir / year
+        year_dir = self.csv_base_path / year
         if year_dir.exists():
             for month_dir in year_dir.iterdir():
                 if month_dir.is_dir() and month.lower().startswith(month_dir.name.lower()[:3]):
@@ -315,7 +318,10 @@ class BatchProcessor:
             limit: Optional limit on number of files to process
             skip_existing: Skip cases that are already in the database
         """
-        logger.info(f"📋 Loading metadata from: {csv_path}")
+        logger.info(f"[CSV] Loading metadata from: {csv_path}")
+        
+        # Store the base path for PDFs (parent directory of CSV file)
+        self.csv_base_path = csv_path.parent
         
         # Read CSV
         rows: List[Dict[str, Any]] = []
@@ -333,12 +339,12 @@ class BatchProcessor:
         if limit:
             rows = rows[:limit]
         
-        logger.info(f"🚀 Starting CSV-based batch processing")
-        logger.info(f"📋 CSV File: {csv_path}")
-        logger.info(f"📁 Downloads Directory: {downloads_dir}")
-        logger.info(f"📄 Cases to process: {len(rows)}")
-        logger.info(f"🔍 Extraction Mode: {extraction_mode.upper()} {'(fast, free)' if extraction_mode == 'regex' else '(LLM-based)'}")
-        logger.info(f"🔍 RAG Features: Full (chunks + words + phrases + embeddings)")
+        logger.info(f"[>>] Starting CSV-based batch processing")
+        logger.info(f"[CSV] CSV File: {csv_path}")
+        logger.info(f"[DIR] Downloads Directory: {downloads_dir}")
+        logger.info(f"[FILES] Cases to process: {len(rows)}")
+        logger.info(f"[MODE] Extraction Mode: {extraction_mode.upper()} {'(fast, free)' if extraction_mode == 'regex' else '(LLM-based)'}")
+        logger.info(f"[RAG] RAG Features: Full (chunks + words + phrases + embeddings)")
         
         self.start_time = datetime.now()
         skipped_count = 0
@@ -347,14 +353,14 @@ class BatchProcessor:
         # Process each row
         for i, row in enumerate(rows, 1):
             logger.info(f"\n{'='*60}")
-            logger.info(f"📄 Processing Case {i}/{len(rows)}: {row.get('case_number')} - {row.get('case_title', '')[:50]}")
+            logger.info(f"[FILE] Processing Case {i}/{len(rows)}: {row.get('case_number')} - {row.get('case_title', '')[:50]}")
             logger.info(f"{'='*60}")
             
             # Find PDF file
             pdf_path = self._find_pdf_path(row, downloads_dir)
             
             if not pdf_path:
-                logger.warning(f"⚠️ PDF not found for case {row.get('case_number')}, skipping")
+                logger.warning(f"[SKIP] PDF not found for case {row.get('case_number')}, skipping")
                 not_found_count += 1
                 continue
             
@@ -372,9 +378,9 @@ class BatchProcessor:
             elapsed = datetime.now() - self.start_time
             rate = i / elapsed.total_seconds() * 60 if elapsed.total_seconds() > 0 else 0
             
-            logger.info(f"📊 Progress: {i}/{len(rows)} cases processed")
-            logger.info(f"✅ Success: {self.processed_count}, ❌ Failed: {self.failed_count}, ⏭️ Not Found: {not_found_count}")
-            logger.info(f"⏱️ Rate: {rate:.1f} cases/minute")
+            logger.info(f"[STATS] Progress: {i}/{len(rows)} cases processed")
+            logger.info(f"[OK] Success: {self.processed_count}, [FAIL] Failed: {self.failed_count}, [SKIP] Not Found: {not_found_count}")
+            logger.info(f"[TIME] Rate: {rate:.1f} cases/minute")
         
         # Final summary
         self._print_csv_summary(len(rows), not_found_count, skipped_count)
@@ -384,18 +390,18 @@ class BatchProcessor:
         elapsed = datetime.now() - self.start_time
         
         logger.info(f"\n{'='*60}")
-        logger.info(f"🎉 CSV BATCH PROCESSING COMPLETE")
+        logger.info(f"[DONE] CSV BATCH PROCESSING COMPLETE")
         logger.info(f"{'='*60}")
-        logger.info(f"📊 Total Cases in CSV: {total_cases}")
-        logger.info(f"✅ Successfully Processed: {self.processed_count}")
-        logger.info(f"❌ Failed: {self.failed_count}")
-        logger.info(f"⏭️ PDFs Not Found: {not_found}")
-        logger.info(f"⏭️ Skipped (existing): {skipped}")
-        logger.info(f"📈 Success Rate: {(self.processed_count/(total_cases-not_found-skipped)*100):.1f}%" if (total_cases-not_found-skipped) > 0 else "N/A")
-        logger.info(f"⏱️ Total Time: {elapsed}")
+        logger.info(f"[STATS] Total Cases in CSV: {total_cases}")
+        logger.info(f"[OK] Successfully Processed: {self.processed_count}")
+        logger.info(f"[FAIL] Failed: {self.failed_count}")
+        logger.info(f"[SKIP] PDFs Not Found: {not_found}")
+        logger.info(f"[SKIP] Skipped (existing): {skipped}")
+        logger.info(f"[RATE] Success Rate: {(self.processed_count/(total_cases-not_found-skipped)*100):.1f}%" if (total_cases-not_found-skipped) > 0 else "N/A")
+        logger.info(f"[TIME] Total Time: {elapsed}")
         if self.processed_count > 0:
-            logger.info(f"⚡ Average Rate: {self.processed_count/elapsed.total_seconds()*60:.1f} cases/minute")
-        logger.info(f"💾 Log File: batch_processing.log")
+            logger.info(f"[RATE] Average Rate: {self.processed_count/elapsed.total_seconds()*60:.1f} cases/minute")
+        logger.info(f"[LOG] Log File: batch_processing.log")
 
 def main():
     """Main entry point"""
