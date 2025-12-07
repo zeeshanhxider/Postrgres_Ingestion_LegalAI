@@ -394,6 +394,59 @@ class LLMExtractor:
         """
         case = ExtractedCase()
         
+        # Normalize keys from new prompt schema to expected keys
+        # parties_parsed -> parties
+        if "parties_parsed" in llm_result and "parties" not in llm_result:
+            llm_result["parties"] = llm_result["parties_parsed"]
+        # judicial_panel -> judges
+        if "judicial_panel" in llm_result and "judges" not in llm_result:
+            llm_result["judges"] = llm_result["judicial_panel"]
+        # legal_representation -> attorneys
+        if "legal_representation" in llm_result and "attorneys" not in llm_result:
+            llm_result["attorneys"] = llm_result["legal_representation"]
+        # originating_court nested fields
+        if "originating_court" in llm_result and isinstance(llm_result["originating_court"], dict):
+            orig = llm_result["originating_court"]
+            if not llm_result.get("county"):
+                llm_result["county"] = orig.get("county")
+            if not llm_result.get("trial_court"):
+                llm_result["trial_court"] = orig.get("court_name")
+            if not llm_result.get("trial_judge"):
+                llm_result["trial_judge"] = orig.get("trial_judge")
+            if not llm_result.get("source_docket_number"):
+                llm_result["source_docket_number"] = orig.get("source_docket_number")
+        # outcome nested fields
+        if "outcome" in llm_result and isinstance(llm_result["outcome"], dict):
+            out = llm_result["outcome"]
+            if not llm_result.get("appeal_outcome"):
+                llm_result["appeal_outcome"] = out.get("disposition")
+            if not llm_result.get("outcome_detail"):
+                llm_result["outcome_detail"] = out.get("details")
+            if not llm_result.get("winner_legal_role"):
+                llm_result["winner_legal_role"] = out.get("prevailing_party")
+        # case_category -> case_type
+        if "case_category" in llm_result and not llm_result.get("case_type"):
+            llm_result["case_type"] = llm_result["case_category"]
+        # legal_analysis -> issues and statutes
+        if "legal_analysis" in llm_result and isinstance(llm_result["legal_analysis"], dict):
+            analysis = llm_result["legal_analysis"]
+            # major_issues -> issues
+            if "major_issues" in analysis and "issues" not in llm_result:
+                llm_result["issues"] = []
+                for issue in analysis.get("major_issues", []):
+                    if isinstance(issue, dict):
+                        llm_result["issues"].append({
+                            "summary": issue.get("question", ""),
+                            "outcome": issue.get("ruling", ""),
+                            "category": "Other"
+                        })
+            # key_statutes_cited -> statutes
+            if "key_statutes_cited" in analysis and "statutes" not in llm_result:
+                llm_result["statutes"] = []
+                for statute in analysis.get("key_statutes_cited", []):
+                    if isinstance(statute, str):
+                        llm_result["statutes"].append({"citation": statute})
+        
         # Simple fields
         case.summary = llm_result.get("summary", "")
         case.case_type = llm_result.get("case_type", "")
@@ -406,31 +459,45 @@ class LLMExtractor:
         case.winner_legal_role = llm_result.get("winner_legal_role")
         case.winner_personal_role = llm_result.get("winner_personal_role")
         
-        # Parties
+        # Parties (handles both old and new schema field names)
         for p in llm_result.get("parties", []):
-            if isinstance(p, dict) and p.get("name"):
-                case.parties.append(Party(
-                    name=p["name"],
-                    role=p.get("role", "Unknown"),
-                    party_type=p.get("party_type")
-                ))
+            if isinstance(p, dict):
+                name = p.get("name")
+                # Build role from appellate_role and trial_role if present
+                role = p.get("role") or p.get("appellate_role") or "Unknown"
+                if p.get("trial_role") and p.get("trial_role") != "null":
+                    role = f"{role} ({p.get('trial_role')})"
+                party_type = p.get("party_type") or p.get("type")
+                if name:
+                    case.parties.append(Party(
+                        name=name,
+                        role=role,
+                        party_type=party_type
+                    ))
         
-        # Attorneys
+        # Attorneys (handles both old and new schema field names)
         for a in llm_result.get("attorneys", []):
-            if isinstance(a, dict) and a.get("name"):
-                case.attorneys.append(Attorney(
-                    name=a["name"],
-                    representing=a.get("representing", "Unknown"),
-                    firm_name=a.get("firm_name")
-                ))
+            if isinstance(a, dict):
+                name = a.get("name") or a.get("attorney_name")
+                representing = a.get("representing", "Unknown")
+                firm_name = a.get("firm_name") or a.get("firm_or_agency")
+                if name:
+                    case.attorneys.append(Attorney(
+                        name=name,
+                        representing=representing,
+                        firm_name=firm_name
+                    ))
         
-        # Judges
+        # Judges (handles both old and new schema field names)
         for j in llm_result.get("judges", []):
-            if isinstance(j, dict) and j.get("name"):
-                case.judges.append(Judge(
-                    name=j["name"],
-                    role=j.get("role", "Unknown")
-                ))
+            if isinstance(j, dict):
+                name = j.get("name") or j.get("judge_name")
+                role = j.get("role", "Unknown")
+                if name:
+                    case.judges.append(Judge(
+                        name=name,
+                        role=role
+                    ))
         
         # Citations
         for c in llm_result.get("citations", []):

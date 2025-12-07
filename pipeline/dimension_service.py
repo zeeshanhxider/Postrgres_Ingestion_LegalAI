@@ -246,11 +246,12 @@ class DimensionService:
         """Get or create court and return ID."""
         if not court_name:
             # Build court name from level and division
-            if court_level == 'Supreme':
+            court_level_lower = (court_level or '').lower()
+            if 'supreme' in court_level_lower:
                 court_name = 'Washington State Supreme Court'
-            elif court_level == 'Appeals' and division:
+            elif 'appeals' in court_level_lower and division:
                 court_name = f'Washington Court of Appeals Division {division}'
-            elif court_level == 'Appeals':
+            elif 'appeals' in court_level_lower:
                 court_name = 'Washington Court of Appeals'
             else:
                 return None

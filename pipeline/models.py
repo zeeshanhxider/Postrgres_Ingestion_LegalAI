@@ -31,7 +31,7 @@ class CaseMetadata:
     scraped_at: Optional[datetime] = None
     
     # Derived from metadata
-    court_level: str = ""               # Derived: "Supreme" or "Appeals" from opinion_type
+    court_level: str = ""               # Derived: "Supreme Court" or "Court of Appeals" from opinion_type
     
 
 @dataclass

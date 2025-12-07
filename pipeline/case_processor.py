@@ -115,14 +115,14 @@ class CaseProcessor:
             except:
                 pass
         
-        # Derive court_level from opinion_type
+        # Derive court_level from opinion_type (keep human-readable)
         opinion_type_lower = metadata.opinion_type.lower()
         if 'supreme' in opinion_type_lower:
-            metadata.court_level = 'Supreme'
+            metadata.court_level = 'Supreme Court'
         elif 'appeals' in opinion_type_lower or 'appellate' in opinion_type_lower:
-            metadata.court_level = 'Appeals'
+            metadata.court_level = 'Court of Appeals'
         else:
-            metadata.court_level = 'Unknown'
+            metadata.court_level = metadata.opinion_type or 'Unknown'
         
         return metadata
     

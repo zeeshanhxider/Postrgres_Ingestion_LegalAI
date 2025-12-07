@@ -247,7 +247,7 @@ class DatabaseInserter:
                 source_url, case_info_url,
                 overall_case_outcome, appeal_outcome,
                 winner_legal_role, winner_personal_role,
-                opinion_type, publication_status, 
+                publication_status, 
                 decision_year, decision_month,
                 case_type, source_file, source_file_path,
                 court_id, case_type_id, stage_type_id,
@@ -261,7 +261,7 @@ class DatabaseInserter:
                 :source_url, :case_info_url,
                 :overall_case_outcome, :appeal_outcome,
                 :winner_legal_role, :winner_personal_role,
-                :opinion_type, :publication_status,
+                :publication_status,
                 :decision_year, :decision_month,
                 :case_type, :source_file, :source_file_path,
                 :court_id, :case_type_id, :stage_type_id,
@@ -278,9 +278,9 @@ class DatabaseInserter:
         
         # Build court name
         court = None
-        if meta.court_level == 'Supreme':
+        if 'supreme' in (meta.court_level or '').lower():
             court = 'Washington State Supreme Court'
-        elif meta.court_level == 'Appeals':
+        elif 'appeals' in (meta.court_level or '').lower():
             division = meta.division or ''
             court = f'Washington Court of Appeals Division {division}'.strip()
         
@@ -310,7 +310,6 @@ class DatabaseInserter:
             'appeal_outcome': case.appeal_outcome,
             'winner_legal_role': case.winner_legal_role,
             'winner_personal_role': case.winner_personal_role,
-            'opinion_type': meta.opinion_type or None,
             'publication_status': meta.publication_status or 'Published',
             'decision_year': meta.year,
             'decision_month': meta.month or None,
@@ -348,10 +347,10 @@ class DatabaseInserter:
         level = meta.court_level
         district = f"Division {meta.division}" if meta.division else None
         
-        if meta.court_level == 'Supreme':
+        if 'supreme' in (meta.court_level or '').lower():
             court_name = 'Washington State Supreme Court'
             court_type = 'Supreme Court'
-        elif meta.court_level == 'Appeals':
+        elif 'appeals' in (meta.court_level or '').lower():
             division = meta.division or ''
             court_name = f'Washington Court of Appeals Division {division}'.strip()
             court_type = 'Court of Appeals'
