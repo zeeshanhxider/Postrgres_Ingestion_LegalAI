@@ -17,7 +17,7 @@ load_dotenv()
 
 # Set up Ollama
 os.environ['OLLAMA_BASE_URL'] = 'https://ollama.legaldb.ai'
-os.environ['OLLAMA_MODEL'] = 'qwen:32b'
+os.environ['OLLAMA_MODEL'] = 'qwen2.5:32b-instruct'
 os.environ['AI_PROVIDER'] = 'ollama'
 
 # Configure logging to file

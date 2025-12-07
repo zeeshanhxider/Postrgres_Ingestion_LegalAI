@@ -160,7 +160,8 @@ class LLMExtractor:
             "stream": False,
             "options": {
                 "temperature": 0.1,      # Low temperature for consistent extraction
-                "num_predict": 4096,     # Allow longer responses for full extraction
+                "num_predict": 16384,    # Allow much longer responses for complex case JSON
+                "num_ctx": 32768,        # Large context window - required for long legal documents
             }
         }
         
@@ -191,6 +192,9 @@ class LLMExtractor:
         # Clean up response
         text = response.strip()
         
+        # Debug: log first 500 chars of raw response
+        logger.debug(f"Raw LLM response (first 500 chars): {text[:500]}")
+        
         # Remove markdown code blocks if present
         if text.startswith("```json"):
             text = text[7:]
@@ -205,9 +209,14 @@ class LLMExtractor:
         start = text.find("{")
         end = text.rfind("}") + 1
         
-        if start == -1 or end == 0:
-            logger.warning("No JSON object found in response")
+        if start == -1:
+            logger.warning(f"No JSON object found in response. Response preview: {text[:300]}...")
             return {}
+        
+        # Check if JSON was truncated (no closing brace)
+        if end == 0:
+            logger.warning(f"JSON response appears truncated (no closing brace). Attempting regex extraction...")
+            return self._fix_and_parse_json(text[start:])
         
         json_str = text[start:end]
         
@@ -299,23 +308,37 @@ class LLMExtractor:
                 result['winner_personal_role'] = winner_personal_match.group(1)
             
             # Try to extract arrays using a more robust approach
-            # Find parties array
-            parties_match = re.search(r'"parties"\s*:\s*\[(.*?)\]', original, re.DOTALL)
+            # Find parties_parsed array (or parties for legacy)
+            parties_match = re.search(r'"parties_parsed"\s*:\s*\[(.*?)\]', original, re.DOTALL)
+            if not parties_match:
+                parties_match = re.search(r'"parties"\s*:\s*\[(.*?)\]', original, re.DOTALL)
             if parties_match:
                 try:
                     parties_json = '[' + parties_match.group(1) + ']'
                     parties_json = re.sub(r',\s*]', ']', parties_json)
-                    result['parties'] = json.loads(parties_json)
+                    result['parties_parsed'] = json.loads(parties_json)
                 except:
                     pass
             
-            # Find judges array
-            judges_match = re.search(r'"judges"\s*:\s*\[(.*?)\]', original, re.DOTALL)
+            # Find judicial_panel array (or judges for legacy)
+            judges_match = re.search(r'"judicial_panel"\s*:\s*\[(.*?)\]', original, re.DOTALL)
+            if not judges_match:
+                judges_match = re.search(r'"judges"\s*:\s*\[(.*?)\]', original, re.DOTALL)
             if judges_match:
                 try:
                     judges_json = '[' + judges_match.group(1) + ']'
                     judges_json = re.sub(r',\s*]', ']', judges_json)
-                    result['judges'] = json.loads(judges_json)
+                    result['judicial_panel'] = json.loads(judges_json)
+                except:
+                    pass
+            
+            # Find legal_representation array
+            legal_rep_match = re.search(r'"legal_representation"\s*:\s*\[(.*?)\]', original, re.DOTALL)
+            if legal_rep_match:
+                try:
+                    legal_rep_json = '[' + legal_rep_match.group(1) + ']'
+                    legal_rep_json = re.sub(r',\s*]', ']', legal_rep_json)
+                    result['legal_representation'] = json.loads(legal_rep_json)
                 except:
                     pass
             

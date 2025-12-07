@@ -104,19 +104,20 @@ def clear_cases(dry_run: bool = False):
         
         # Clear tables in order
         print("\nClearing tables...")
-        trans = conn.begin()
+        # Commit any existing transaction first
+        conn.commit()
         
         try:
             for table in CASE_TABLES:
                 try:
                     conn.execute(text(f"TRUNCATE TABLE {table} CASCADE"))
-                    print(f"  ✓ {table} cleared")
+                    print(f"  [OK] {table} cleared")
                 except Exception as e:
-                    print(f"  ✗ {table}: {e}")
+                    print(f"  [FAIL] {table}: {e}")
             
-            trans.commit()
+            conn.commit()
             print("\n" + "=" * 60)
-            print("✅ All case data cleared successfully!")
+            print("[SUCCESS] All case data cleared successfully!")
             print("=" * 60)
             
             # Verify
@@ -125,16 +126,16 @@ def clear_cases(dry_run: bool = False):
             all_clear = all(c == 0 for c in counts.values() if isinstance(c, int))
             
             if all_clear:
-                print("✅ All tables confirmed empty.")
+                print("[OK] All tables confirmed empty.")
             else:
-                print("⚠️  Some tables still have data:")
+                print("[WARN] Some tables still have data:")
                 for table, count in counts.items():
                     if isinstance(count, int) and count > 0:
                         print(f"  {table}: {count}")
                         
         except Exception as e:
-            trans.rollback()
-            print(f"\n❌ Error: {e}")
+            conn.rollback()
+            print(f"\n[ERROR] {e}")
             print("Transaction rolled back.")
             raise
 
