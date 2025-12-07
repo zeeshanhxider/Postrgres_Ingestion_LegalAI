@@ -75,18 +75,18 @@ class BatchProcessor:
                 'file_path': str(pdf_path.absolute())
             }
             
-            # Process with case ingestor
+            # Process with case ingestor (using regex by default)
             result = self.ingestor.ingest_pdf_case(
                 pdf_content=pdf_content,
                 metadata=metadata,
                 source_file_info=source_file_info,
-                enable_ai_extraction=True
+                extraction_mode='regex'  # Fast regex extraction
             )
             
             # Log results
             logger.info(f"✅ Successfully processed {pdf_path.name}")
             logger.info(f"   Case ID: {result['case_id']}")
-            logger.info(f"   AI Extraction: {'✓' if result['ai_extraction'] else '✗'}")
+            logger.info(f"   Extraction Mode: {result['extraction_mode']}")
             logger.info(f"   Chunks: {result['chunks_created']}")
             logger.info(f"   Words: {result['words_processed']} ({result['unique_words']} unique)")
             logger.info(f"   Phrases: {result['phrases_extracted']}")
@@ -119,7 +119,7 @@ class BatchProcessor:
         logger.info(f"🚀 Starting legal case batch processing")
         logger.info(f"📁 Source Directory: {pdf_dir}")
         logger.info(f"📄 Files to process: {len(pdf_files)}")
-        logger.info(f"🤖 AI Extraction: Enabled (Ollama + OpenAI fallback)")
+        logger.info(f"🔍 Extraction: Regex (fast, free)")
         logger.info(f"🔍 RAG Features: Full (chunks + words + phrases + embeddings)")
         
         self.start_time = datetime.now()
@@ -163,13 +163,19 @@ class BatchProcessor:
         logger.info(f"⚡ Average Rate: {self.processed_count/elapsed.total_seconds()*60:.1f} files/minute")
         logger.info(f"💾 Log File: batch_processing.log")
 
-    def process_pdf_with_metadata(self, pdf_path: Path, row_metadata: Dict[str, Any]) -> bool:
+    def process_pdf_with_metadata(
+        self, 
+        pdf_path: Path, 
+        row_metadata: Dict[str, Any],
+        extraction_mode: str = 'regex'
+    ) -> bool:
         """
         Process a single PDF file with pre-extracted metadata from CSV.
         
         Args:
             pdf_path: Path to PDF file
             row_metadata: Metadata from CSV row
+            extraction_mode: 'regex' (fast), 'ai' (slow), or 'none'
             
         Returns:
             True if successful, False if failed
@@ -222,13 +228,13 @@ class BatchProcessor:
                 pdf_content=pdf_content,
                 metadata=metadata,
                 source_file_info=source_file_info,
-                enable_ai_extraction=True
+                extraction_mode=extraction_mode
             )
             
             # Log results
             logger.info(f"✅ Successfully processed {row_metadata.get('case_number')}")
             logger.info(f"   Case ID: {result['case_id']}")
-            logger.info(f"   AI Extraction: {'✓' if result['ai_extraction'] else '✗'}")
+            logger.info(f"   Extraction Mode: {result['extraction_mode']}")
             logger.info(f"   Chunks: {result['chunks_created']}")
             logger.info(f"   Words: {result['words_processed']} ({result['unique_words']} unique)")
             logger.info(f"   Phrases: {result['phrases_extracted']}")
@@ -245,11 +251,11 @@ class BatchProcessor:
     def _find_pdf_path(self, row: Dict[str, Any], downloads_dir: Path) -> Optional[Path]:
         """
         Find the PDF file path based on CSV row metadata.
-        PDFs are organized as: downloads/{year}/{month}/{filename}
+        PDFs are organized as: downloads/Supreme_Court_Opinions/{year}/{month}/{filename}
         
         Args:
             row: CSV row with metadata
-            downloads_dir: Base downloads directory
+            downloads_dir: Base downloads directory (e.g., downloads/Supreme_Court_Opinions)
             
         Returns:
             Path to PDF file or None if not found
@@ -262,22 +268,24 @@ class BatchProcessor:
             logger.warning(f"Missing path components: year={year}, month={month}, filename={filename}")
             return None
         
-        # Try exact path: downloads/{year}/{month}/{filename}
+        # Try exact path: downloads_dir/{year}/{month}/{filename}
         pdf_path = downloads_dir / year / month / filename
         if pdf_path.exists():
             return pdf_path
         
         # Try with different month formats (e.g., "January" vs "Jan")
-        for month_dir in (downloads_dir / year).iterdir() if (downloads_dir / year).exists() else []:
-            if month_dir.is_dir() and month.lower().startswith(month_dir.name.lower()[:3]):
-                alt_path = month_dir / filename
-                if alt_path.exists():
-                    return alt_path
+        year_dir = downloads_dir / year
+        if year_dir.exists():
+            for month_dir in year_dir.iterdir():
+                if month_dir.is_dir() and month.lower().startswith(month_dir.name.lower()[:3]):
+                    alt_path = month_dir / filename
+                    if alt_path.exists():
+                        return alt_path
         
         # Try finding by case number in filename
         case_number = row.get('case_number', '')
-        if case_number and (downloads_dir / year).exists():
-            for month_dir in (downloads_dir / year).iterdir():
+        if case_number and year_dir.exists():
+            for month_dir in year_dir.iterdir():
                 if month_dir.is_dir():
                     for pdf_file in month_dir.glob("*.pdf"):
                         if case_number.replace(',', '') in pdf_file.name.replace(',', ''):
@@ -291,7 +299,8 @@ class BatchProcessor:
         csv_path: Path, 
         downloads_dir: Path,
         limit: Optional[int] = None,
-        skip_existing: bool = True
+        skip_existing: bool = True,
+        extraction_mode: str = 'regex'
     ) -> None:
         """
         Process cases from a metadata CSV file.
@@ -324,7 +333,7 @@ class BatchProcessor:
         logger.info(f"📋 CSV File: {csv_path}")
         logger.info(f"📁 Downloads Directory: {downloads_dir}")
         logger.info(f"📄 Cases to process: {len(rows)}")
-        logger.info(f"🤖 AI Extraction: Enabled (Ollama + OpenAI fallback)")
+        logger.info(f"🔍 Extraction Mode: {extraction_mode.upper()} {'(fast, free)' if extraction_mode == 'regex' else '(LLM-based)'}")
         logger.info(f"🔍 RAG Features: Full (chunks + words + phrases + embeddings)")
         
         self.start_time = datetime.now()
@@ -348,7 +357,7 @@ class BatchProcessor:
             # TODO: Add skip_existing check against database here if needed
             
             # Process the PDF with enriched metadata
-            success = self.process_pdf_with_metadata(pdf_path, row)
+            success = self.process_pdf_with_metadata(pdf_path, row, extraction_mode)
             
             if success:
                 self.processed_count += 1
@@ -402,6 +411,8 @@ def main():
     csv_parser.add_argument('--downloads-dir', default='downloads', help='Base directory for downloaded PDFs (default: downloads)')
     csv_parser.add_argument('--limit', type=int, help='Limit number of cases to process')
     csv_parser.add_argument('--no-skip-existing', action='store_true', help='Process even if case exists in database')
+    csv_parser.add_argument('--extraction-mode', choices=['regex', 'ai', 'none'], default='regex',
+                           help='Extraction mode: regex (fast, free), ai (LLM-based, slow), none (metadata only). Default: regex')
     
     # Global options
     parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose logging')
@@ -441,7 +452,8 @@ def main():
             csv_path=csv_path,
             downloads_dir=downloads_dir,
             limit=args.limit,
-            skip_existing=not args.no_skip_existing
+            skip_existing=not args.no_skip_existing,
+            extraction_mode=args.extraction_mode
         )
     else:
         # No mode specified, show help

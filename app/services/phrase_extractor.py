@@ -223,7 +223,7 @@ class PhraseExtractor:
                 'frequency': frequency,
                 'example_chunk': examples.get(phrase),
                 'document_id': document_id if document_id is not None else None,
-                'example_sentence': examples.get(phrase)  # Use chunk as sentence for now
+                'example_sentence': None  # Sentence ID not tracked during phrase extraction
             })
         
         if not phrase_records:

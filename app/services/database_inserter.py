@@ -426,6 +426,270 @@ class DatabaseInserter:
                     logger.warning(f"Could not parse date: {date_str}")
                     return None
     
+    def insert_regex_extraction(self, regex_result, metadata: Dict[str, Any] = None,
+                                 source_file_info: Dict[str, str] = None) -> Optional[int]:
+        """
+        Insert case data from regex extraction (fast, no LLM).
+        
+        Args:
+            regex_result: RegexExtractionResult from regex_extractor
+            metadata: Original metadata from CSV
+            source_file_info: Source file information
+            
+        Returns:
+            case_id if successful, None if failed
+        """
+        from .regex_extractor import RegexExtractionResult
+        
+        try:
+            with self.db.connect() as conn:
+                trans = conn.begin()
+                
+                try:
+                    # 1. Resolve dimension table IDs from metadata
+                    dimension_ids = {}
+                    if metadata:
+                        dimension_ids = self.dimension_service.resolve_metadata_to_ids(metadata)
+                        logger.info(f"🔍 Resolved dimension IDs: {dimension_ids}")
+                    
+                    # 2. Insert case record
+                    case_id = self._insert_case_from_regex(conn, regex_result, dimension_ids, source_file_info)
+                    logger.info(f"📁 Inserted case with ID: {case_id}")
+                    
+                    # 3. Insert parties
+                    for party in regex_result.parties:
+                        self._insert_party_from_regex(conn, party, case_id)
+                        logger.info(f"👥 Inserted party: {party.name}")
+                    
+                    # 4. Insert judges
+                    for judge in regex_result.judges:
+                        self._insert_judge_from_regex(conn, judge, case_id)
+                        logger.info(f"👨‍⚖️ Inserted judge: {judge.name} ({judge.role})")
+                    
+                    # 5. Insert statute citations (RCW)
+                    for statute in regex_result.statutes:
+                        self._insert_statute_citation(conn, statute, case_id)
+                    logger.info(f"📜 Inserted {len(regex_result.statutes)} statute citations")
+                    
+                    # 6. Insert case citations
+                    for citation in regex_result.citations:
+                        self._insert_case_citation(conn, citation, case_id)
+                    logger.info(f"📖 Inserted {len(regex_result.citations)} case citations")
+                    
+                    trans.commit()
+                    logger.info(f"✅ Successfully inserted case {case_id} via regex extraction")
+                    return case_id
+                    
+                except Exception as e:
+                    trans.rollback()
+                    logger.error(f"❌ Failed to insert regex case: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    return None
+                    
+        except Exception as e:
+            logger.error(f"❌ Database connection error: {e}")
+            return None
+    
+    def _insert_case_from_regex(self, conn, regex_result, dimension_ids: Dict[str, Optional[int]],
+                                source_file_info: Dict[str, str] = None) -> int:
+        """Insert case from regex extraction result"""
+        
+        # Map court_level string to enum value
+        court_level_map = {
+            'supreme_court': 'supreme_court',
+            'court_of_appeals': 'court_of_appeals',
+            'unknown': 'unknown'
+        }
+        court_level = court_level_map.get(regex_result.court_level, 'unknown')
+        
+        # Map division
+        division_map = {
+            'division_one': 'division_one',
+            'division_two': 'division_two', 
+            'division_three': 'division_three',
+            None: None
+        }
+        division = division_map.get(regex_result.division)
+        
+        # Map outcome
+        outcome_map = {
+            'affirmed': 'affirmed',
+            'reversed': 'reversed',
+            'remanded': 'remanded',
+            'dismissed': 'dismissed',
+            None: None
+        }
+        outcome = outcome_map.get(regex_result.appeal_outcome)
+        
+        query = text("""
+            INSERT INTO cases (
+                case_file_id, title, court_level, district, county,
+                docket_number, appeal_published_date,
+                published, source_url, overall_case_outcome, appeal_outcome,
+                case_type_id, stage_type_id, court_id,
+                source_file, source_file_path, extraction_timestamp,
+                created_at, updated_at
+            ) VALUES (
+                :case_file_id, :title, :court_level, :district, :county,
+                :docket_number, :appeal_published_date,
+                :published, :source_url, :overall_case_outcome, :appeal_outcome,
+                :case_type_id, :stage_type_id, :court_id,
+                :source_file, :source_file_path, :extraction_timestamp,
+                :created_at, :updated_at
+            )
+            RETURNING case_id
+        """)
+        
+        now = datetime.now()
+        dimension_ids = dimension_ids or {}
+        
+        result = conn.execute(query, {
+            'case_file_id': regex_result.case_number,
+            'title': regex_result.case_name,
+            'court_level': court_level,
+            'district': division,
+            'county': regex_result.county,
+            'docket_number': regex_result.case_number,
+            'appeal_published_date': regex_result.decision_date,
+            'published': regex_result.publication_status == 'published',
+            'source_url': regex_result.pdf_url,
+            'overall_case_outcome': outcome,
+            'appeal_outcome': outcome,
+            'case_type_id': dimension_ids.get('case_type_id'),
+            'stage_type_id': dimension_ids.get('stage_type_id'),
+            'court_id': dimension_ids.get('court_id'),
+            'source_file': source_file_info.get('filename') if source_file_info else None,
+            'source_file_path': source_file_info.get('file_path') if source_file_info else None,
+            'extraction_timestamp': now,
+            'created_at': now,
+            'updated_at': now
+        })
+        
+        case_id = result.fetchone().case_id
+        return case_id
+    
+    def _insert_party_from_regex(self, conn, party, case_id: int) -> int:
+        """Insert party from regex extraction"""
+        # Map role to legal_role enum
+        role_map = {
+            'appellant': 'appellant',
+            'respondent': 'respondent',
+            'petitioner': 'petitioner',
+            'appellee': 'respondent',
+            'cross_appellant': 'cross_appellant',
+        }
+        legal_role = role_map.get(party.role, 'appellant')
+        
+        query = text("""
+            INSERT INTO parties (case_id, name, legal_role, created_at)
+            VALUES (:case_id, :name, :legal_role, :created_at)
+            RETURNING party_id
+        """)
+        
+        result = conn.execute(query, {
+            'case_id': case_id,
+            'name': party.name,
+            'legal_role': legal_role,
+            'created_at': datetime.now()
+        })
+        
+        return result.fetchone().party_id
+    
+    def _insert_judge_from_regex(self, conn, judge, case_id: int) -> None:
+        """Insert judge from regex extraction with normalized approach"""
+        # First, insert or get judge record
+        judge_query = text("""
+            INSERT INTO judges (name) VALUES (:name)
+            ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+            RETURNING judge_id
+        """)
+        
+        result = conn.execute(judge_query, {'name': judge.name})
+        judge_row = result.fetchone()
+        
+        if not judge_row:
+            select_query = text("SELECT judge_id FROM judges WHERE name = :name")
+            result = conn.execute(select_query, {'name': judge.name})
+            judge_row = result.fetchone()
+        
+        if judge_row:
+            judge_id = judge_row.judge_id
+            
+            # Map regex role to database role
+            role_map = {
+                'author': 'authoring',
+                'concurring': 'concurring',
+                'dissenting': 'dissenting',
+                'pro_tempore': 'pro_tempore',
+                'author_pro_tempore': 'authoring',
+                'concurring_pro_tempore': 'concurring',
+            }
+            judge_role = role_map.get(judge.role, 'authoring')
+            
+            # Insert into case_judges junction table
+            case_judge_query = text("""
+                INSERT INTO case_judges (case_id, judge_id, role)
+                VALUES (:case_id, :judge_id, :role)
+                ON CONFLICT (case_id, judge_id) DO NOTHING
+            """)
+            
+            conn.execute(case_judge_query, {
+                'case_id': case_id,
+                'judge_id': judge_id,
+                'role': judge_role
+            })
+    
+    def _insert_statute_citation(self, conn, statute, case_id: int) -> None:
+        """Insert RCW statute citation"""
+        # First insert into statutes table (normalized)
+        statute_query = text("""
+            INSERT INTO statutes (statute_number, jurisdiction, title)
+            VALUES (:statute_number, 'WA', :title)
+            ON CONFLICT (statute_number) DO UPDATE SET statute_number = EXCLUDED.statute_number
+            RETURNING statute_id
+        """)
+        
+        result = conn.execute(statute_query, {
+            'statute_number': statute.rcw_number,
+            'title': statute.full_text
+        })
+        row = result.fetchone()
+        
+        if not row:
+            select_query = text("SELECT statute_id FROM statutes WHERE statute_number = :num")
+            result = conn.execute(select_query, {'num': statute.rcw_number})
+            row = result.fetchone()
+        
+        if row:
+            # Insert into statute_citations junction
+            cite_query = text("""
+                INSERT INTO statute_citations (case_id, statute_id, citation_text)
+                VALUES (:case_id, :statute_id, :citation_text)
+                ON CONFLICT DO NOTHING
+            """)
+            conn.execute(cite_query, {
+                'case_id': case_id,
+                'statute_id': row.statute_id,
+                'citation_text': statute.full_text
+            })
+    
+    def _insert_case_citation(self, conn, citation, case_id: int) -> None:
+        """Insert case citation into citation_edges"""
+        query = text("""
+            INSERT INTO citation_edges (source_case_id, target_case_citation, relationship, importance, created_at)
+            VALUES (:source_case_id, :target_case_citation, :relationship, :importance, :created_at)
+            ON CONFLICT DO NOTHING
+        """)
+        
+        conn.execute(query, {
+            'source_case_id': case_id,
+            'target_case_citation': citation.full_citation,
+            'relationship': 'cited',
+            'importance': 'cited',
+            'created_at': datetime.now()
+        })
+
     def get_case_stats(self, case_id: int) -> dict:
         """Get statistics for inserted case data"""
         with self.db.connect() as conn:

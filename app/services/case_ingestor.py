@@ -1,6 +1,6 @@
 """
 Legal Case Ingestor
-Complete legal case processing with AI extraction, chunking, word/phrase indexing, and database storage.
+Complete legal case processing with AI/Regex extraction, chunking, word/phrase indexing, and database storage.
 Designed for comprehensive RAG capabilities and reliable data extraction.
 """
 
@@ -12,8 +12,9 @@ from typing import Dict, List, Optional, Tuple, Any
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-# Import our AI extraction and database services
+# Import our extraction and database services
 from .ai_extractor import extract_case_data
+from .regex_extractor import extract_case_data_regex
 from .database_inserter import DatabaseInserter
 
 # Import word and phrase processing
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 class LegalCaseIngestor:
     """
     Complete legal case ingestor that provides:
-    1. AI extraction (proven and reliable)
+    1. Regex extraction (fast, free) OR AI extraction (slow, accurate)
     2. Database insertion (comprehensive schema)
     3. PDF chunking (for RAG)
     4. Word/phrase processing (for precise search)
@@ -53,7 +54,8 @@ class LegalCaseIngestor:
         pdf_content: bytes, 
         metadata: Dict[str, Any],
         source_file_info: Optional[Dict[str, str]] = None,
-        enable_ai_extraction: bool = True
+        enable_ai_extraction: bool = False,  # Default to regex (fast)
+        extraction_mode: str = 'regex'  # 'regex', 'ai', or 'none'
     ) -> Dict[str, Any]:
         """
         Main ingestion method - processes PDF with complete hybrid approach
@@ -62,15 +64,20 @@ class LegalCaseIngestor:
             pdf_content: PDF file content as bytes
             metadata: Case metadata
             source_file_info: Source file information (filename, path)
-            enable_ai_extraction: Whether to run AI extraction
+            enable_ai_extraction: DEPRECATED - use extraction_mode instead
+            extraction_mode: 'regex' (fast), 'ai' (slow), or 'none' (metadata only)
             
         Returns:
             Dictionary with ingestion results
         """
-        case_id = None  # Will be set by AI extraction or fallback
+        # Handle legacy parameter
+        if enable_ai_extraction:
+            extraction_mode = 'ai'
         
+        case_id = None
+
         try:
-            logger.info(f"🚀 Starting case ingestion for case {case_id or 'TBD'}")
+            logger.info(f"🚀 Starting case ingestion (mode: {extraction_mode})")
             
             # Step 1: Parse PDF content
             logger.info("📖 Parsing PDF content...")
@@ -82,13 +89,27 @@ class LegalCaseIngestor:
             
             logger.info(f"✅ Parsed PDF: {len(pages)} pages, {len(full_text)} characters")
             
-            # Step 2: AI Extraction (using proven old method)
-            extracted_data = None
-            if enable_ai_extraction:
+            # Step 2: Extract case data based on mode
+            if extraction_mode == 'regex':
+                # FAST: Use regex extraction
+                logger.info("🔍 Running regex extraction...")
+                regex_result = extract_case_data_regex(full_text, metadata)
+                
+                logger.info(f"✅ Regex extraction: {len(regex_result.judges)} judges, "
+                           f"{len(regex_result.citations)} citations, "
+                           f"{len(regex_result.statutes)} statutes")
+                
+                # Insert using regex result
+                case_id = self.database_inserter.insert_regex_extraction(
+                    regex_result, metadata, source_file_info
+                )
+                
+            elif extraction_mode == 'ai':
+                # SLOW: Use AI extraction (original method)
                 logger.info("🤖 Running AI extraction...")
                 case_info = {
                     'case_number': metadata.get('case_number', 'Unknown'),
-                    'title': metadata.get('title', 'Unknown'),
+                    'title': metadata.get('title', metadata.get('case_title', 'Unknown')),
                     'court_level': metadata.get('court_level', 'Unknown'),
                     'division': metadata.get('division', 'Unknown'),
                     'publication': metadata.get('publication', 'Unknown'),
@@ -99,18 +120,31 @@ class LegalCaseIngestor:
                 
                 if extracted_data:
                     logger.info("✅ AI extraction successful")
-                    
-                    # Insert AI-extracted data - system assigns case_id
-                    logger.info("💾 Inserting AI-extracted data...")
-                    case_id = self.database_inserter.insert_complete_case(extracted_data, metadata, source_file_info)
-                    if case_id:
-                        logger.info(f"✅ AI-extracted data inserted successfully with case_id: {case_id}")
-                    else:
-                        logger.warning("⚠️ Failed to insert AI-extracted data")
-                        case_id = None
+                    case_id = self.database_inserter.insert_complete_case(
+                        extracted_data, metadata, source_file_info
+                    )
                 else:
-                    logger.warning("⚠️ AI extraction failed, proceeding with basic case record")
-                    case_id = None
+                    logger.warning("⚠️ AI extraction failed, falling back to regex")
+                    regex_result = extract_case_data_regex(full_text, metadata)
+                    case_id = self.database_inserter.insert_regex_extraction(
+                        regex_result, metadata, source_file_info
+                    )
+            else:
+                # MINIMAL: No extraction, just metadata
+                logger.info("📋 Using metadata only (no extraction)")
+                regex_result = extract_case_data_regex(full_text, metadata)
+                # Clear extracted entities, keep only metadata
+                regex_result.judges = []
+                regex_result.citations = []
+                regex_result.statutes = []
+                case_id = self.database_inserter.insert_regex_extraction(
+                    regex_result, metadata, source_file_info
+                )
+            
+            if not case_id:
+                raise ValueError("Failed to insert case record")
+            
+            logger.info(f"✅ Case inserted with ID: {case_id}")
             
             # Step 3: Create document record if we have a case
             document_id = None
@@ -202,7 +236,7 @@ class LegalCaseIngestor:
             result = {
                 'case_id': case_id,
                 'status': 'success',
-                'ai_extraction': extracted_data is not None,
+                'extraction_mode': extraction_mode,
                 'chunks_created': len(chunk_ids),
                 'words_processed': word_stats['total_words'],
                 'unique_words': word_stats['unique_words'],
