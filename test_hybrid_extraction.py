@@ -12,6 +12,7 @@ import sys
 import logging
 import pandas as pd
 from pathlib import Path
+from datetime import datetime
 from sqlalchemy import text
 
 # Add the app directory to Python path
@@ -20,17 +21,30 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'app'))
 from app.database import engine
 from app.services.case_ingestor import LegalCaseIngestor
 
-# Configure logging
+# Create logs directory if it doesn't exist
+LOGS_DIR = Path(__file__).parent / "logs"
+LOGS_DIR.mkdir(exist_ok=True)
+
+# Generate timestamped log filename
+LOG_FILENAME = LOGS_DIR / f"hybrid_test_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+
+# Configure logging with DEBUG level for detailed output
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Changed to DEBUG for more detail
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('hybrid_test.log')
+        logging.FileHandler(LOG_FILENAME)
     ]
 )
 
+# Reduce noise from some loggers
+logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
+logging.getLogger('httpcore').setLevel(logging.WARNING)
+logging.getLogger('httpx').setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
+logger.info(f"📝 Logging to: {LOG_FILENAME}")
 
 
 def clear_database():

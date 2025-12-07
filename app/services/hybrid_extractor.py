@@ -3,9 +3,9 @@ Hybrid Legal Case Extractor
 Combines metadata (CSV), regex (fast patterns), and AI (LLM) extraction for comprehensive data population.
 
 Strategy:
-1. METADATA: Primary source for case identifiers, URLs, dates, publication status
-2. REGEX: Fast extraction of structural patterns (judges, citations, statutes, outcomes, county, parties)
-3. AI: Complex understanding (summary, issues/decisions, arguments, attorneys with details, personal roles, trial info)
+1. METADATA: Primary source for case identifiers, URLs, dates, court_level (from opinion_type), publication status
+2. REGEX: Fast extraction of structural patterns (citations, statutes, parties, division, en_banc flag)
+3. AI: Complex understanding (judges, county, outcomes, summary, issues/decisions, arguments, attorneys, precedents, trial info)
 
 This ensures ALL columns are populated by using each method for what it does best.
 """
@@ -67,12 +67,12 @@ class HybridExtractionResult:
     appeal_published_date: Optional[datetime] = None  # From metadata.file_date
     published: bool = True  # From metadata.file_contains
     
-    # === COURT INFO (metadata priority, regex fallback) ===
-    court_level: str = "unknown"  # Mapped from opinion_type or regex
+    # === COURT INFO (metadata primary) ===
+    court_level: str = "unknown"  # From metadata.opinion_type
     court: Optional[str] = None  # From AI (full court name)
-    district: Optional[str] = None  # From metadata.division or regex
+    district: Optional[str] = None  # From metadata.division or regex fallback
     docket_number: Optional[str] = None  # Composite: case_number-division
-    county: Optional[str] = None  # From regex
+    county: Optional[str] = None  # From AI
     
     # === TRIAL COURT INFO (AI only) ===
     source_docket_number: Optional[str] = None  # From AI
@@ -86,10 +86,10 @@ class HybridExtractionResult:
     appeal_end_date: Optional[datetime] = None  # From AI
     oral_argument_date: Optional[datetime] = None  # From AI
     
-    # === OUTCOMES (regex + AI) ===
-    appeal_outcome: Optional[str] = None  # From regex (affirmed/reversed/etc)
-    overall_case_outcome: Optional[str] = None  # From regex or AI
-    outcome_detail: Optional[str] = None  # From regex (e.g., "affirmed in part")
+    # === OUTCOMES (AI only) ===
+    appeal_outcome: Optional[str] = None  # From AI (affirmed/reversed/etc)
+    overall_case_outcome: Optional[str] = None  # From AI
+    outcome_detail: Optional[str] = None  # From AI (e.g., "affirmed in part")
     
     # === WINNER INFO (AI only) ===
     winner_legal_role: Optional[str] = None  # From AI
@@ -100,7 +100,7 @@ class HybridExtractionResult:
     case_type: Optional[str] = None  # From AI
     
     # === EXTRACTED ENTITIES ===
-    # Judges: Regex extracts names/roles, AI may add more detail
+    # Judges: AI only
     judges: List[ExtractedJudge] = field(default_factory=list)
     
     # Parties: Regex extracts names/legal roles, AI adds personal roles
@@ -298,12 +298,10 @@ class HybridExtractor:
     def _merge_regex_results(self, result: HybridExtractionResult, regex_result: RegexExtractionResult) -> None:
         """Merge regex extraction results into hybrid result"""
         
-        # Court level (regex fallback if metadata didn't provide it)
-        if result.court_level == 'unknown' and regex_result.court_level:
-            result.court_level = regex_result.court_level
-            result.extraction_sources['court_level'] = 'regex'
+        # NOTE: court_level comes from metadata (opinion_type) only - no regex fallback
+        # NOTE: judges, county, appeal_outcome, outcome_detail are extracted by AI only
         
-        # Division (regex fallback)
+        # Division (regex fallback only if metadata didn't provide it)
         if not result.district and regex_result.division:
             division_map = {
                 'division_one': 'Division I',
@@ -313,26 +311,14 @@ class HybridExtractor:
             result.district = division_map.get(regex_result.division)
             result.extraction_sources['district'] = 'regex'
         
-        # County (regex only)
-        result.county = regex_result.county
-        result.extraction_sources['county'] = 'regex'
-        
-        # Outcome (regex)
-        result.appeal_outcome = regex_result.appeal_outcome
-        result.overall_case_outcome = regex_result.appeal_outcome
-        result.outcome_detail = regex_result.outcome_detail
-        result.extraction_sources['appeal_outcome'] = 'regex'
-        
-        # En banc flag
+        # En banc flag (regex)
         result.en_banc = regex_result.en_banc
         
-        # Entities from regex
-        result.judges = regex_result.judges
+        # Entities from regex (only parties, citations, statutes - NOT judges)
         result.parties = regex_result.parties
         result.citations = regex_result.citations
         result.statutes = regex_result.statutes
         
-        result.extraction_sources['judges'] = 'regex'
         result.extraction_sources['parties'] = 'regex'
         result.extraction_sources['citations'] = 'regex'
         result.extraction_sources['statutes'] = 'regex'
@@ -341,6 +327,33 @@ class HybridExtractor:
         """Merge AI extraction results, enriching existing data"""
         
         case_data = ai_result.case
+        
+        # === COUNTY (AI only) ===
+        if case_data.county:
+            result.county = case_data.county
+            result.extraction_sources['county'] = 'ai'
+        
+        # === APPEAL OUTCOME (AI only) ===
+        if case_data.appeal_outcome:
+            result.appeal_outcome = case_data.appeal_outcome.value
+            result.extraction_sources['appeal_outcome'] = 'ai'
+        if case_data.overall_case_outcome:
+            result.overall_case_outcome = case_data.overall_case_outcome.value
+            result.extraction_sources['overall_case_outcome'] = 'ai'
+        
+        # === JUDGES (AI only - not regex) ===
+        for ai_judge in ai_result.appeals_judges:
+            role_map = {
+                'Authored by': 'author',
+                'Concurring': 'concurring',
+                'Dissenting': 'dissenting',
+                'Joining': 'panelist'
+            }
+            result.judges.append(ExtractedJudge(
+                name=ai_judge.judge_name,
+                role=role_map.get(ai_judge.role.value, 'author')
+            ))
+        result.extraction_sources['judges'] = 'ai'
         
         # === TRIAL COURT INFO (AI only) ===
         result.source_docket_number = case_data.source_docket_number
@@ -353,10 +366,15 @@ class HybridExtractor:
         result.extraction_sources['trial_judge'] = 'ai'
         result.extraction_sources['trial_dates'] = 'ai'
         
-        # === APPEAL DATES (AI only) ===
-        result.appeal_start_date = self._parse_date(case_data.appeal_start_date)
-        result.appeal_end_date = self._parse_date(case_data.appeal_end_date)
-        result.oral_argument_date = self._parse_date(case_data.oral_argument_date)
+        # === APPEAL DATES (AI fills in what metadata didn't provide) ===
+        if not result.appeal_start_date:
+            result.appeal_start_date = self._parse_date(case_data.appeal_start_date)
+        if not result.appeal_end_date:
+            result.appeal_end_date = self._parse_date(case_data.appeal_end_date)
+        if not result.appeal_published_date:
+            result.appeal_published_date = self._parse_date(case_data.appeal_published_date)
+        if not result.oral_argument_date:
+            result.oral_argument_date = self._parse_date(case_data.oral_argument_date)
         
         result.extraction_sources['appeal_dates'] = 'ai'
         
@@ -379,14 +397,6 @@ class HybridExtractor:
         result.extraction_sources['summary'] = 'ai'
         result.extraction_sources['case_type'] = 'ai'
         
-        # === OUTCOME (AI can override if more detailed) ===
-        if case_data.overall_case_outcome and not result.overall_case_outcome:
-            result.overall_case_outcome = case_data.overall_case_outcome.value
-            result.extraction_sources['overall_case_outcome'] = 'ai'
-        if case_data.appeal_outcome and not result.appeal_outcome:
-            result.appeal_outcome = case_data.appeal_outcome.value
-            result.extraction_sources['appeal_outcome'] = 'ai'
-        
         # === ENTITIES FROM AI ===
         
         # Attorneys (AI only - regex doesn't extract these)
@@ -408,26 +418,6 @@ class HybridExtractor:
         # Precedents with relationship context (AI enriches regex citations)
         result.precedents = ai_result.precedents
         result.extraction_sources['precedents'] = 'ai'
-        
-        # Judges (AI may have additional judges not found by regex)
-        # Merge with regex judges, avoiding duplicates
-        ai_judge_names = {j.judge_name.lower() for j in ai_result.appeals_judges}
-        regex_judge_names = {j.name.lower() for j in result.judges}
-        
-        # Add AI judges that weren't found by regex
-        for ai_judge in ai_result.appeals_judges:
-            if ai_judge.judge_name.lower() not in regex_judge_names:
-                # Convert to ExtractedJudge format
-                role_map = {
-                    'Authored by': 'author',
-                    'Concurring': 'concurring',
-                    'Dissenting': 'dissenting',
-                    'Joining': 'panelist'
-                }
-                result.judges.append(ExtractedJudge(
-                    name=ai_judge.judge_name,
-                    role=role_map.get(ai_judge.role.value, 'author')
-                ))
     
     def _finalize_results(self, result: HybridExtractionResult) -> None:
         """Finalize and deduplicate merged results"""

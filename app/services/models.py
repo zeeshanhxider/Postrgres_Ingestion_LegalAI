@@ -55,18 +55,29 @@ class LegalRole(str, Enum):
     UNKNOWN = "Unknown"
 
 class PersonalRole(str, Enum):
+    # Family law roles
     HUSBAND = "Husband"
     WIFE = "Wife"
     PARENT = "Parent"
+    CHILD = "Child"
     OTHER = "Other"
     ESTATE = "Estate"
+    
+    # Universal roles for non-divorce cases
+    CORPORATION = "Corporation"
+    GOVERNMENT = "Government"
+    INDIVIDUAL = "Individual"
     
     # Also accept lowercase versions
     HUSBAND_LOWER = "husband"
     WIFE_LOWER = "wife"
     PARENT_LOWER = "parent"
+    CHILD_LOWER = "child"
     OTHER_LOWER = "other"
     ESTATE_LOWER = "estate"
+    CORPORATION_LOWER = "corporation"
+    GOVERNMENT_LOWER = "government"
+    INDIVIDUAL_LOWER = "individual"
     
     # Flexible fallbacks
     UNKNOWN = "Unknown"
@@ -181,15 +192,34 @@ class PrecedentRelationship(str, Enum):
     UNKNOWN = "Unknown"
 
 # =============================================================================
-# WASHINGTON STATE DIVORCE APPEALS CATEGORIZATION (from ChatGPT conversation)
+# WASHINGTON STATE COURT CASE CATEGORIZATION - UNIVERSAL
 # =============================================================================
 
 class IssueCategory(str, Enum):
-    """Top-level categories for Washington State divorce appeals"""
+    """Top-level categories for Washington State court cases (all types)"""
+    # UNIVERSAL CATEGORIES (Non-Divorce)
+    CRIMINAL_LAW = "Criminal Law & Procedure"
+    CONSTITUTIONAL_LAW = "Constitutional Law"
+    CIVIL_PROCEDURE = "Civil Procedure"
+    EVIDENCE = "Evidence"
+    CONTRACTS = "Contracts"
+    TORTS = "Torts / Personal Injury"
+    PROPERTY_LAW = "Property Law"
+    EMPLOYMENT_LAW = "Employment Law"
+    ESTATE_PROBATE = "Estate & Probate"
+    ADMINISTRATIVE_LAW = "Administrative Law"
+    BUSINESS_COMMERCIAL = "Business & Commercial"
+    INSURANCE_LAW = "Insurance Law"
+    ENVIRONMENTAL_LAW = "Environmental Law"
+    
+    # FAMILY LAW / DIVORCE CATEGORIES
+    FAMILY_LAW = "Family Law"
     SPOUSAL_SUPPORT = "Spousal Support / Maintenance"
     CHILD_SUPPORT = "Child Support"
     PARENTING_PLAN = "Parenting Plan / Custody / Visitation"
     PROPERTY_DIVISION = "Property Division / Debt Allocation"
+    
+    # GENERAL CATEGORIES (applicable to all case types)
     ATTORNEY_FEES = "Attorney Fees & Costs"
     PROCEDURAL_EVIDENTIARY = "Procedural & Evidentiary Issues"
     JURISDICTION_VENUE = "Jurisdiction & Venue"
